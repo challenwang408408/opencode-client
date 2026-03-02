@@ -41,6 +41,7 @@ struct ChatTabView: View {
     @State private var isRecording = false
     @State private var isTranscribing = false
     @State private var speechError: String?
+    @State private var isUserNearBottom: Bool = true
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var useGridCards: Bool { sizeClass == .regular }
@@ -262,176 +263,10 @@ struct ChatTabView: View {
                     onSettingsTap: onSettingsTap
                 )
 
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            if showLoadMoreHint {
-                                HStack(spacing: 8) {
-                                    if state.isLoadingOlderMessagesInCurrentSession {
-                                        ProgressView()
-                                            .controlSize(.small)
-                                    }
-                                    Text(
-                                        state.isLoadingOlderMessagesInCurrentSession
-                                            ? L10n.t(.chatLoadingMoreHistory)
-                                            : L10n.t(.chatPullToLoadMore)
-                                    )
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 2)
-                            }
+                messageScrollArea
 
-                            if messageGroups.isEmpty {
-                                emptySessionStateView
-                            } else {
-                                ForEach(chatItems) { item in
-                                    switch item {
-                                    case .group(let group):
-                                        switch group {
-                                        case .user(let msg):
-                                            MessageRowView(
-                                                message: msg,
-                                                sessionTodos: state.sessionTodos[msg.info.sessionID] ?? [],
-                                                workspaceDirectory: state.currentSession?.directory,
-                                                onOpenResolvedPath: openFileInChat,
-                                                onOpenFilesTab: openFilesTab
-                                            )
-                                        case .assistantMerged(let msgs):
-                                            if let first = msgs.first {
-                                                let merged = MessageWithParts(info: first.info, parts: msgs.flatMap(\.parts))
-                                                MessageRowView(
-                                                    message: merged,
-                                                    sessionTodos: state.sessionTodos[merged.info.sessionID] ?? [],
-                                                    workspaceDirectory: state.currentSession?.directory,
-                                                    onOpenResolvedPath: openFileInChat,
-                                                    onOpenFilesTab: openFilesTab
-                                                )
-                                            }
-                                        }
-                                    case .activity(let a):
-                                        TurnActivityRowView(activity: a)
-                                    }
-                                }
-                            }
-                            if let streamingPart = state.streamingReasoningPart {
-                                StreamingReasoningView(part: streamingPart, state: state)
-                                    .padding(.top, 6)
-                            }
-
-                            // Permissions should be at the bottom so auto-scroll makes them visible.
-                            // Keep them above the activity row.
-                            if useGridCards {
-                                LazyVGrid(
-                                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
-                                    alignment: .leading,
-                                    spacing: 10
-                                ) {
-                                    ForEach(currentPermissions) { perm in
-                                        PermissionCardView(permission: perm) { response in
-                                            Task { await state.respondPermission(perm, response: response) }
-                                        }
-                                    }
-                                }
-                            } else {
-                                ForEach(currentPermissions) { perm in
-                                    PermissionCardView(permission: perm) { response in
-                                        Task { await state.respondPermission(perm, response: response) }
-                                    }
-                                }
-                            }
-
-                            // Running activity should be at the very bottom.
-                            if let a = runningTurnActivity {
-                                TurnActivityRowView(activity: a)
-                            }
-
-                            Color.clear
-                                .frame(height: 1)
-                                .id("bottom")
-                        }
-                        .padding()
-                    }
-                    .refreshable {
-                        await state.loadOlderMessagesForCurrentSession()
-                    }
-                    .scrollDismissesKeyboard(.immediately)
-                    .onChange(of: scrollAnchor) { _, _ in
-                        if state.isBusy {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        } else {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo("bottom", anchor: .bottom)
-                            }
-                        }
-                    }
-                }
-
-                 Divider()
-                 HStack(alignment: .bottom, spacing: 10) {
-                    TextField(L10n.t(.chatInputPlaceholder), text: $inputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(3...8)
-                        .submitLabel(.send)
-                        .onSubmit {
-                            sendCurrentInput()
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 10)
-                        .background(Color(.systemGray6))
-                        .clipShape(RoundedRectangle(cornerRadius: 20))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .stroke(Color(.systemGray4), lineWidth: 0.5)
-                        )
-
-                    VStack(spacing: 8) {
-                        Button {
-                            Task { await toggleRecording() }
-                        } label: {
-                            if isTranscribing {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: isRecording ? "mic.circle.fill" : "mic.circle")
-                                    .font(.title)
-                                    .symbolRenderingMode(.hierarchical)
-                                    .foregroundStyle(isRecording ? .red : .secondary)
-                            }
-                        }
-                        .disabled(isSending || isTranscribing)
-
-                        Button {
-                            sendCurrentInput()
-                        } label: {
-                            if isSending {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                            } else {
-                                Image(systemName: "arrow.up.circle.fill")
-                                    .font(.title)
-                                    .symbolRenderingMode(.hierarchical)
-                                    .foregroundColor(.accentColor)
-                            }
-                        }
-                        .keyboardShortcut(.return, modifiers: [])
-                        .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending || isRecording || isTranscribing)
-
-                        if state.isBusy {
-                            Button {
-                                Task { await state.abortSession() }
-                            } label: {
-                                Image(systemName: "stop.circle.fill")
-                                    .font(.title)
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .background(.bar)
+                Divider()
+                chatInputBar
             }
             .navigationTitle(state.currentSession?.title ?? L10n.t(.appChat))
             .navigationBarTitleDisplayMode(.inline)
@@ -481,6 +316,7 @@ struct ChatTabView: View {
             .onChange(of: state.currentSessionID) { oldID, newID in
                 state.setDraftText(inputText, for: oldID)
                 syncDraftFromState(sessionID: newID)
+                isUserNearBottom = true
             }
             .onChange(of: inputText) { _, newValue in
                 guard !isSyncingDraft else { return }
@@ -500,6 +336,7 @@ struct ChatTabView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
+        isUserNearBottom = true
         inputText = ""
         isSending = true
         Task {
@@ -574,7 +411,7 @@ struct ChatTabView: View {
         let streamKeyCount = state.streamingPartTexts.count
         let streamCharCount = state.streamingPartTexts.values.reduce(into: 0) { partial, text in
             partial += text.count
-        }
+        } / 200
         let streamingReasoningID = state.streamingReasoningPart?.id ?? ""
         let sid = state.currentSessionID ?? ""
         let status = state.currentSessionStatus?.type ?? ""
@@ -583,6 +420,212 @@ struct ChatTabView: View {
             return "\($0.id)-\($0.text)-\(state)"
         } ?? ""
         return "\(perm)-\(messageCount)-\(lastMessageSignature)-\(streamKeyCount)-\(streamCharCount)-\(streamingReasoningID)-\(sid)-\(status)-\(activity)"
+    }
+
+    // MARK: - Message Scroll Area
+    private var messageScrollArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                messageListContent
+            }
+            .refreshable {
+                await state.loadOlderMessagesForCurrentSession()
+            }
+            .scrollDismissesKeyboard(.immediately)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        if value.translation.height > 30 {
+                            isUserNearBottom = false
+                        }
+                    }
+            )
+            .onChange(of: scrollAnchor) { _, _ in
+                guard isUserNearBottom else { return }
+                if state.isBusy {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                } else {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("bottom", anchor: .bottom)
+                    }
+                }
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !isUserNearBottom {
+                    Button {
+                        isUserNearBottom = true
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("bottom", anchor: .bottom)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.title)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundColor(.accentColor)
+                            .background(Circle().fill(.regularMaterial))
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 12)
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isUserNearBottom)
+        }
+    }
+
+    private var messageListContent: some View {
+        LazyVStack(alignment: .leading, spacing: 12) {
+            if showLoadMoreHint {
+                HStack(spacing: 8) {
+                    if state.isLoadingOlderMessagesInCurrentSession {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                    Text(
+                        state.isLoadingOlderMessagesInCurrentSession
+                            ? L10n.t(.chatLoadingMoreHistory)
+                            : L10n.t(.chatPullToLoadMore)
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, 2)
+            }
+
+            if messageGroups.isEmpty {
+                emptySessionStateView
+            } else {
+                ForEach(chatItems) { item in
+                    switch item {
+                    case .group(let group):
+                        switch group {
+                        case .user(let msg):
+                            MessageRowView(
+                                message: msg,
+                                sessionTodos: state.sessionTodos[msg.info.sessionID] ?? [],
+                                workspaceDirectory: state.currentSession?.directory,
+                                onOpenResolvedPath: openFileInChat,
+                                onOpenFilesTab: openFilesTab
+                            )
+                        case .assistantMerged(let msgs):
+                            if let first = msgs.first {
+                                let merged = MessageWithParts(info: first.info, parts: msgs.flatMap(\.parts))
+                                MessageRowView(
+                                    message: merged,
+                                    sessionTodos: state.sessionTodos[merged.info.sessionID] ?? [],
+                                    workspaceDirectory: state.currentSession?.directory,
+                                    onOpenResolvedPath: openFileInChat,
+                                    onOpenFilesTab: openFilesTab
+                                )
+                            }
+                        }
+                    case .activity(let a):
+                        TurnActivityRowView(activity: a)
+                    }
+                }
+            }
+            if let streamingPart = state.streamingReasoningPart {
+                StreamingReasoningView(part: streamingPart, state: state)
+                    .padding(.top, 6)
+            }
+
+            if useGridCards {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 3),
+                    alignment: .leading,
+                    spacing: 10
+                ) {
+                    ForEach(currentPermissions) { perm in
+                        PermissionCardView(permission: perm) { response in
+                            Task { await state.respondPermission(perm, response: response) }
+                        }
+                    }
+                }
+            } else {
+                ForEach(currentPermissions) { perm in
+                    PermissionCardView(permission: perm) { response in
+                        Task { await state.respondPermission(perm, response: response) }
+                    }
+                }
+            }
+
+            if let a = runningTurnActivity {
+                TurnActivityRowView(activity: a)
+            }
+
+            Color.clear
+                .frame(height: 1)
+                .id("bottom")
+                .onAppear { isUserNearBottom = true }
+        }
+        .padding()
+    }
+
+    // MARK: - Chat Input Bar
+    private var chatInputBar: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField(L10n.t(.chatInputPlaceholder), text: $inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(3...8)
+                .submitLabel(.send)
+                .onSubmit {
+                    sendCurrentInput()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(.systemGray6))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color(.systemGray4), lineWidth: 0.5)
+                )
+
+            VStack(spacing: 8) {
+                Button {
+                    Task { await toggleRecording() }
+                } label: {
+                    if isTranscribing {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: isRecording ? "mic.circle.fill" : "mic.circle")
+                            .font(.title)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(isRecording ? .red : .secondary)
+                    }
+                }
+                .disabled(isSending || isTranscribing)
+
+                Button {
+                    sendCurrentInput()
+                } label: {
+                    if isSending {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundColor(.accentColor)
+                    }
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending || isRecording || isTranscribing)
+
+                if state.isBusy {
+                    Button {
+                        Task { await state.abortSession() }
+                    } label: {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.title)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(.bar)
     }
 
     @ViewBuilder

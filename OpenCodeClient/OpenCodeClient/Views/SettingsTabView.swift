@@ -15,6 +15,9 @@ struct SettingsTabView: View {
     @State private var publicKeyForSheet = ""
     @State private var sshConfig: SSHTunnelConfig = .default
     @State private var publicKeyLoadError: String?
+    @State private var isEditingRemotePort = false
+    @State private var editingRemotePort: Int = 0
+    @State private var isSwitchingMachine = false
 
     var body: some View {
         NavigationStack {
@@ -153,17 +156,65 @@ struct SettingsTabView: View {
                                 reconnectSSHTunnelIfNeeded()
                             }
                         
-                        HStack {
-                            Text(L10n.t(.settingsVpsPort))
-                            Spacer()
-                            TextField("", value: $sshConfig.remotePort, formatter: NumberFormatter())
-                                .keyboardType(.numberPad)
-                                .frame(width: 80)
-                                .multilineTextAlignment(.trailing)
-                                .onChange(of: sshConfig.remotePort) { _, newValue in
-                                    state.sshTunnelManager.config.remotePort = newValue
-                                    reconnectSSHTunnelIfNeeded()
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(L10n.t(.settingsVpsPort))
+                                Spacer()
+                                Text("\(sshConfig.remotePort)")
+                                    .foregroundStyle(.secondary)
+                                    .font(.body.monospacedDigit())
+                                Text("·")
+                                    .foregroundStyle(.tertiary)
+                                Text(machineLabel(for: sshConfig.remotePort))
+                                    .font(.body.weight(.medium))
+                                    .foregroundStyle(sshConfig.remotePort == 20080 ? .blue : .orange)
+                            }
+
+                            HStack(spacing: 12) {
+                                machineButton(
+                                    label: "台式机",
+                                    port: 20080,
+                                    icon: "desktopcomputer",
+                                    color: .blue
+                                )
+                                machineButton(
+                                    label: "笔记本",
+                                    port: 20081,
+                                    icon: "laptopcomputer",
+                                    color: .orange
+                                )
+                            }
+
+                            if isEditingRemotePort {
+                                HStack {
+                                    Text("自定义端口")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    TextField("", value: $editingRemotePort, formatter: NumberFormatter())
+                                        .keyboardType(.numberPad)
+                                        .frame(width: 80)
+                                        .multilineTextAlignment(.trailing)
+                                    Button(L10n.t(.commonSave)) {
+                                        switchToPort(editingRemotePort)
+                                        isEditingRemotePort = false
+                                    }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                                    Button(L10n.t(.commonCancel)) {
+                                        isEditingRemotePort = false
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .controlSize(.small)
                                 }
+                            } else {
+                                Button {
+                                    editingRemotePort = sshConfig.remotePort
+                                    isEditingRemotePort = true
+                                } label: {
+                                    Label("自定义端口", systemImage: "number")
+                                        .font(.caption)
+                                }
+                            }
                         }
 
                         HStack {
@@ -373,6 +424,56 @@ struct SettingsTabView: View {
         }
     }
 
+    private func machineLabel(for port: Int) -> String {
+        switch port {
+        case 20080: return "台式机"
+        case 20081: return "笔记本"
+        default: return "端口 \(port)"
+        }
+    }
+
+    @ViewBuilder
+    private func machineButton(label: String, port: Int, icon: String, color: Color) -> some View {
+        let isCurrent = sshConfig.remotePort == port
+        Button {
+            guard !isCurrent else { return }
+            switchToPort(port)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                Text(label)
+                    .font(.body.weight(.medium))
+                Text("(\(port))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if isCurrent {
+                    Image(systemName: "checkmark.circle.fill")
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .tint(isCurrent ? color : .gray)
+        .disabled(isSwitchingMachine)
+    }
+
+    private func switchToPort(_ newPort: Int) {
+        let oldPort = sshConfig.remotePort
+        guard newPort != oldPort, newPort > 0 else { return }
+        sshConfig.remotePort = newPort
+        state.sshTunnelManager.config.remotePort = newPort
+        isSwitchingMachine = true
+        Task {
+            state.sshTunnelManager.disconnect()
+            await state.sshTunnelManager.connect()
+            if case .connected = state.sshTunnelManager.status {
+                await state.refresh()
+            }
+            isSwitchingMachine = false
+        }
+    }
+
     private func reconnectSSHTunnelIfNeeded(force: Bool = true) {
         guard sshConfig.isEnabled else { return }
         if !force {
@@ -383,6 +484,9 @@ struct SettingsTabView: View {
         Task {
             state.sshTunnelManager.disconnect()
             await state.sshTunnelManager.connect()
+            if case .connected = state.sshTunnelManager.status {
+                await state.refresh()
+            }
         }
     }
 

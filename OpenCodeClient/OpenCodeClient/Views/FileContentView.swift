@@ -9,13 +9,16 @@ import MarkdownUI
 struct FileContentView: View {
     @Bindable var state: AppState
     let filePath: String
+    @Environment(\.dismiss) private var dismiss
     @State private var content: String?
     @State private var imageData: Data?
     @State private var isLoading = false
     @State private var loadError: String?
     @State private var showPreview = true
+    @State private var loadTask: Task<Void, Never>?
 
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "heic", "heif", "ico"]
+    private static let imageLoadTimeout: UInt64 = 15_000_000_000 // 15s
 
     private var isImage: Bool {
         let ext = filePath.lowercased().split(separator: ".").last.map(String.init) ?? ""
@@ -32,6 +35,18 @@ struct FileContentView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .cancellationAction) {
+            Button {
+                loadTask?.cancel()
+                dismiss()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.body.weight(.semibold))
+                    Text(L10n.t(.navFiles))
+                }
+            }
+        }
         if let content {
             ToolbarItem(placement: .primaryAction) {
                 ShareLink(item: content, subject: Text(fileName)) {
@@ -61,8 +76,18 @@ struct FileContentView: View {
     var body: some View {
         Group {
             if isLoading {
-                ProgressView("Loading...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 20) {
+                    ProgressView("Loading...")
+                    Button(role: .cancel) {
+                        loadTask?.cancel()
+                        dismiss()
+                    } label: {
+                        Text("Cancel")
+                            .font(.body)
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let err = loadError {
                 ContentUnavailableView("Error", systemImage: "exclamationmark.triangle", description: Text(err))
             } else if let data = imageData, let uiImage = UIImage(data: data) {
@@ -75,9 +100,13 @@ struct FileContentView: View {
         }
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar { toolbarContent }
         .onAppear {
             loadContent()
+        }
+        .onDisappear {
+            loadTask?.cancel()
         }
         .refreshable {
             loadContent()
@@ -98,34 +127,85 @@ struct FileContentView: View {
     }
 
     private func loadContent() {
+        loadTask?.cancel()
         isLoading = true
         loadError = nil
         imageData = nil
         content = nil
-        Task {
+
+        let path = filePath
+        let wantImage = isImage
+
+        loadTask = Task {
             do {
-                let fc = try await state.loadFileContent(path: filePath)
+                if wantImage {
+                    try await loadImage(path: path)
+                } else {
+                    try await loadText(path: path)
+                }
+            } catch is CancellationError {
+                // View disappeared or reload triggered
+            } catch let urlError as URLError where urlError.code == .timedOut {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    if let text = fc.text {
-                        content = text
-                    } else if let base64 = fc.content, fc.type == "binary" {
-                        if isImage {
-                            if let data = Data(base64Encoded: base64) {
-                                imageData = data
-                            } else {
-                                loadError = "Failed to decode image data"
-                            }
-                        } else {
-                            loadError = "Binary file"
-                        }
-                    }
+                    loadError = "Loading timed out — the image may be too large"
                     isLoading = false
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
                     loadError = error.localizedDescription
                     isLoading = false
                 }
+            }
+        }
+    }
+
+    /// Fast path for images: uses optimized APIClient.imageData() which keeps all
+    /// base64/JSON processing on the APIClient actor. Only decoded bytes reach here.
+    private func loadImage(path: String) async throws {
+        let data: Data = try await withThrowingTaskGroup(of: Data.self) { group in
+            group.addTask {
+                try await state.loadImageData(path: path)
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: Self.imageLoadTimeout)
+                throw URLError(.timedOut)
+            }
+            guard let result = try await group.next() else {
+                throw URLError(.timedOut)
+            }
+            group.cancelAll()
+            return result
+        }
+
+        try Task.checkCancellation()
+
+        await MainActor.run {
+            imageData = data
+            isLoading = false
+        }
+    }
+
+    /// Standard path for text/markdown/code files.
+    private func loadText(path: String) async throws {
+        let fc = try await state.loadFileContent(path: path)
+
+        try Task.checkCancellation()
+
+        if let text = fc.text {
+            await MainActor.run {
+                content = text
+                isLoading = false
+            }
+        } else if fc.type == "binary" {
+            await MainActor.run {
+                loadError = "Binary file"
+                isLoading = false
+            }
+        } else {
+            await MainActor.run {
+                isLoading = false
             }
         }
     }

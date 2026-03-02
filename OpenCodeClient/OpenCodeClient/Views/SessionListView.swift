@@ -12,6 +12,7 @@ struct SessionListView: View {
     @State private var deletingSessionID: String?
     @State private var deleteError: String?
     @State private var showCreateDisabledAlert = false
+    @State private var expandedParentIDs: Set<String> = []
 
     var body: some View {
         NavigationStack {
@@ -24,23 +25,17 @@ struct SessionListView: View {
                     )
                 } else {
                     List {
-                        ForEach(state.sortedSessions) { session in
-                            SessionRowView(
-                                session: session,
-                                status: state.sessionStatuses[session.id],
-                                isSelected: state.currentSessionID == session.id,
-                                isDeleting: deletingSessionID == session.id
-                            ) {
-                                selectSession(session)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button {
-                                    pendingDeleteSession = session
-                                } label: {
-                                    Label(L10n.t(.sessionsDelete), systemImage: "trash")
+                        ForEach(state.groupedSessions) { group in
+                            Section(header: Text(group.title)) {
+                                ForEach(group.sessions) { session in
+                                    sessionRow(session)
+                                    if expandedParentIDs.contains(session.id) {
+                                        ForEach(state.childSessions(for: session.id)) { child in
+                                            sessionRow(child)
+                                                .padding(.leading, 28)
+                                        }
+                                    }
                                 }
-                                .tint(.red)
-                                .disabled(deletingSessionID != nil)
                             }
                         }
                     }
@@ -118,6 +113,44 @@ struct SessionListView: View {
         }
     }
 
+    @ViewBuilder
+    private func sessionRow(_ session: Session) -> some View {
+        let children = state.childSessions(for: session.id)
+        let hasChildren = !children.isEmpty
+        let isExpanded = expandedParentIDs.contains(session.id)
+
+        SessionRowView(
+            session: session,
+            status: state.sessionStatuses[session.id],
+            isSelected: state.currentSessionID == session.id,
+            isDeleting: deletingSessionID == session.id,
+            childCount: children.count,
+            isExpanded: isExpanded,
+            isChild: session.parentID != nil && !session.parentID!.isEmpty
+        ) {
+            selectSession(session)
+        } onToggleExpand: {
+            if hasChildren {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isExpanded {
+                        expandedParentIDs.remove(session.id)
+                    } else {
+                        expandedParentIDs.insert(session.id)
+                    }
+                }
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                pendingDeleteSession = session
+            } label: {
+                Label(L10n.t(.sessionsDelete), systemImage: "trash")
+            }
+            .tint(.red)
+            .disabled(deletingSessionID != nil)
+        }
+    }
+
     private func selectSession(_ session: Session) {
         state.selectSession(session)
         dismiss()
@@ -142,7 +175,11 @@ struct SessionRowView: View {
     let status: SessionStatus?
     let isSelected: Bool
     let isDeleting: Bool
+    var childCount: Int = 0
+    var isExpanded: Bool = false
+    var isChild: Bool = false
     let onSelect: () -> Void
+    var onToggleExpand: (() -> Void)? = nil
     
     private var isBusy: Bool {
         guard let status else { return false }
@@ -152,24 +189,57 @@ struct SessionRowView: View {
     var body: some View {
         Button(action: onSelect) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
-                        .font(.headline)
-                        .foregroundStyle(isBusy ? .blue : .primary)
+                if isChild {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 12)
+                }
 
-                    HStack(spacing: 8) {
-                        Text(formattedDate(session.time.updated))
+                if isChild {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .foregroundStyle(isBusy ? .blue : .primary)
 
-                        if let status {
-                            Text(statusLabel(status))
+                        Text(formattedDate(session.time.updated))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
+                                .font(.headline)
+                                .foregroundStyle(isBusy ? .blue : .primary)
+
+                            if childCount > 0 {
+                                Text("\(childCount)")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.secondary.opacity(0.5)))
+                            }
+                        }
+
+                        HStack(spacing: 8) {
+                            Text(formattedDate(session.time.updated))
                                 .font(.caption)
-                                .foregroundStyle(statusColor(status))
+                                .foregroundStyle(.secondary)
+
+                            if let status {
+                                Text(statusLabel(status))
+                                    .font(.caption)
+                                    .foregroundStyle(statusColor(status))
+                            }
                         }
                     }
                 }
+
                 Spacer()
+
                 if isDeleting {
                     ProgressView()
                         .controlSize(.small)
@@ -177,8 +247,20 @@ struct SessionRowView: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.secondary)
                 }
+
+                if childCount > 0 {
+                    Button {
+                        onToggleExpand?()
+                    } label: {
+                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, isChild ? 0 : 4)
         }
         .disabled(isDeleting)
         .buttonStyle(.plain)

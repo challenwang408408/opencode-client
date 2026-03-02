@@ -14,6 +14,9 @@ struct ChatToolbarView: View {
     var onSettingsTap: (() -> Void)?
     
     @State private var showCreateDisabledAlert = false
+    @State private var showModelPicker = false
+    @State private var modelSearchText = ""
+    @State private var collapsedProviderIDs: Set<String> = []
     @Environment(\.horizontalSizeClass) private var sizeClass
     
     private var useCompactLabels: Bool {
@@ -25,13 +28,16 @@ struct ChatToolbarView: View {
     }
     
     var body: some View {
-        HStack {
-            sessionButtons
-            Spacer()
-            rightButtons
+        VStack(spacing: 0) {
+            HStack {
+                sessionButtons
+                Spacer()
+                rightButtons
+            }
+            .padding(.horizontal, LayoutConstants.Spacing.spacious)
+            .padding(.vertical, LayoutConstants.MessageList.verticalPadding)
+
         }
-        .padding(.horizontal, LayoutConstants.Spacing.spacious)
-        .padding(.vertical, LayoutConstants.MessageList.verticalPadding)
     }
     
     // MARK: - Session Operation Buttons
@@ -103,19 +109,8 @@ struct ChatToolbarView: View {
     
     // MARK: - Model Selection Menu
     private var modelMenu: some View {
-        Menu {
-            ForEach(Array(state.modelPresets.enumerated()), id: \.element.id) { index, preset in
-                Button {
-                    state.setSelectedModelIndex(index)
-                } label: {
-                    HStack {
-                        Text(preset.displayName)
-                        if state.selectedModelIndex == index {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
+        Button {
+            showModelPicker = true
         } label: {
             HStack(spacing: 4) {
                 Text(useCompactLabels ? (state.selectedModel?.shortName ?? "Model") : (state.selectedModel?.displayName ?? "Model"))
@@ -129,7 +124,131 @@ struct ChatToolbarView: View {
             .foregroundColor(.white)
             .clipShape(Capsule())
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showModelPicker) {
+            modelPickerSheet
+                .onAppear {
+                    resetCollapsedProviders()
+                }
+        }
+    }
+
+    private var modelPickerSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Models shown reflect your account permissions and subscription availability.")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !filteredRecentPresets.isEmpty {
+                    Section("Recent") {
+                        ForEach(filteredRecentPresets) { preset in
+                            modelRow(preset)
+                        }
+                    }
+                }
+
+                ForEach(filteredModelPresetGroups, id: \.group.id) { entry in
+                    DisclosureGroup(isExpanded: isGroupExpandedBinding(entry.group.providerID)) {
+                        ForEach(entry.presets) { preset in
+                            modelRow(preset)
+                        }
+                    } label: {
+                        Text(entry.group.displayName)
+                            .fontWeight(entry.group.providerID == "openai" ? .bold : .regular)
+                    }
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Models")
+            .searchable(text: $modelSearchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search models or providers")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        showModelPicker = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func modelRow(_ preset: ModelPreset) -> some View {
+        Button {
+            if let index = state.modelPresets.firstIndex(where: { $0.id == preset.id }) {
+                state.setSelectedModelIndex(index)
+                showModelPicker = false
+            }
+        } label: {
+            HStack {
+                Text(preset.displayName)
+                Spacer()
+                if state.selectedModel?.id == preset.id {
+                    Image(systemName: "checkmark")
+                        .foregroundColor(.accentColor)
+                }
+            }
+        }
+    }
+
+    private var filteredRecentPresets: [ModelPreset] {
+        let query = normalizedSearch
+        guard !query.isEmpty else { return state.recentModelPresets }
+        return state.recentModelPresets.filter { preset in
+            let providerName = providerNameByPresetID[preset.id] ?? ""
+            let text = "\(preset.displayName) \(preset.shortName) \(providerName)".lowercased()
+            return text.contains(query)
+        }
+    }
+
+    private var filteredModelPresetGroups: [(group: AppState.ModelProviderGroup, presets: [ModelPreset])] {
+        let query = normalizedSearch
+        let recentIDs = Set(filteredRecentPresets.map { $0.id })
+        return state.modelPresetGroups.compactMap { group in
+            let groupMatches = query.isEmpty ? true : group.displayName.lowercased().contains(query)
+            let presets = group.presets.filter { preset in
+                if recentIDs.contains(preset.id) { return false }
+                if query.isEmpty { return true }
+                if groupMatches { return true }
+                let text = "\(preset.displayName) \(preset.shortName)".lowercased()
+                return text.contains(query)
+            }
+            return presets.isEmpty ? nil : (group: group, presets: presets)
+        }
+    }
+
+    private var providerNameByPresetID: [String: String] {
+        var map: [String: String] = [:]
+        for group in state.modelPresetGroups {
+            for preset in group.presets {
+                map[preset.id] = group.displayName
+            }
+        }
+        return map
+    }
+
+    private var normalizedSearch: String {
+        modelSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func resetCollapsedProviders() {
+        let providerIDs = state.modelPresetGroups.map { $0.providerID }
+        collapsedProviderIDs = Set(providerIDs.filter { $0 != "openai" })
+    }
+
+    private func isGroupExpandedBinding(_ providerID: String) -> Binding<Bool> {
+        Binding(
+            get: { !collapsedProviderIDs.contains(providerID) },
+            set: { isExpanded in
+                if isExpanded {
+                    collapsedProviderIDs.remove(providerID)
+                } else {
+                    collapsedProviderIDs.insert(providerID)
+                }
+            }
+        )
     }
     
     // MARK: - Agent Selection Menu

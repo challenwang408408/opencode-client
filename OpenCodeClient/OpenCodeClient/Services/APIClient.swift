@@ -29,7 +29,8 @@ actor APIClient {
         path: String,
         method: String = "GET",
         queryItems: [URLQueryItem]? = nil,
-        body: Data? = nil
+        body: Data? = nil,
+        accept: String = "application/json"
     ) async throws -> (Data, URLResponse) {
         let url: URL
         if let queryItems {
@@ -54,7 +55,7 @@ actor APIClient {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
 
         if let username, let password {
             let credential = "\(username):\(password)"
@@ -259,6 +260,31 @@ actor APIClient {
         }
     }
 
+    struct ShellExecutionResult {
+        let status: String
+        let output: String
+    }
+
+    func shell(sessionID: String, command: String, agent: String = "build") async throws -> ShellExecutionResult {
+        struct ShellBody: Encodable {
+            let command: String
+            let agent: String
+        }
+
+        let bodyData = try JSONEncoder().encode(ShellBody(command: command, agent: agent))
+        let (data, _) = try await makeRequest(path: "/session/\(sessionID)/shell", method: "POST", body: bodyData)
+        let response = try JSONDecoder().decode(MessageWithParts.self, from: data)
+
+        guard let toolPart = response.parts.first(where: { $0.isTool }) else {
+            return ShellExecutionResult(status: "unknown", output: "")
+        }
+
+        return ShellExecutionResult(
+            status: toolPart.stateDisplay ?? "unknown",
+            output: toolPart.toolOutput ?? ""
+        )
+    }
+
     func abort(sessionID: String) async throws {
         let (_, response) = try await makeRequest(path: "/session/\(sessionID)/abort", method: "POST")
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -345,6 +371,33 @@ actor APIClient {
     func fileContent(path: String) async throws -> FileContent {
         let (data, _) = try await makeRequest(path: "/file/content", queryItems: [URLQueryItem(name: "path", value: path)])
         return try JSONDecoder().decode(FileContent.self, from: data)
+    }
+
+    /// Optimized binary file loading: returns decoded image Data directly.
+    /// Tries raw binary first (Accept: */*), falls back to JSON+base64 with fast JSONSerialization.
+    /// All heavy processing stays on this actor — only the final decoded bytes are returned.
+    func imageData(path: String) async throws -> Data {
+        let queryItems = [URLQueryItem(name: "path", value: path)]
+
+        let (data, response) = try await makeRequest(
+            path: "/file/content",
+            queryItems: queryItems,
+            accept: "*/*"
+        )
+
+        if let http = response as? HTTPURLResponse {
+            let ct = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
+            if ct.hasPrefix("image/") || ct == "application/octet-stream" {
+                return data
+            }
+        }
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let base64String = json["content"] as? String,
+              let decoded = Data(base64Encoded: base64String, options: .ignoreUnknownCharacters) else {
+            throw APIError.invalidResponse
+        }
+        return decoded
     }
 
     func findFile(query: String, limit: Int = 50) async throws -> [String] {
@@ -565,7 +618,16 @@ struct HealthResponse: Codable {
     let version: String?
 }
 
-enum APIError: Error {
+enum APIError: Error, LocalizedError {
     case invalidURL
     case httpError(statusCode: Int, data: Data)
+    case invalidResponse
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidURL: return "Invalid URL"
+        case .httpError(let code, _): return "HTTP error \(code)"
+        case .invalidResponse: return "Invalid or unreadable server response"
+        }
+    }
 }

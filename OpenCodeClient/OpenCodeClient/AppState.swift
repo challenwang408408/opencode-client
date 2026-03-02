@@ -16,6 +16,23 @@ final class AppState {
         category: "AppState"
     )
 
+    /// Debug log to a file in the app's Documents directory for easy retrieval
+    nonisolated static func scopeLog(_ message: String) {
+        let ts = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(ts)] \(message)\n"
+        let fm = FileManager.default
+        if let docs = fm.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let logFile = docs.appendingPathComponent("scope_debug.log")
+            if let handle = try? FileHandle(forWritingTo: logFile) {
+                handle.seekToEndOfFile()
+                handle.write(line.data(using: .utf8) ?? Data())
+                handle.closeFile()
+            } else {
+                try? line.data(using: .utf8)?.write(to: logFile)
+            }
+        }
+    }
+
     struct ServerURLInfo {
         let raw: String
         let normalized: String?
@@ -24,6 +41,31 @@ final class AppState {
         let isLocal: Bool
         let isAllowed: Bool
         let warning: String?
+    }
+
+    enum TargetScopeSwitchStatus: Equatable {
+        case idle
+        case switching
+        case disconnected
+        case reconnecting
+        case connected
+        case failed
+
+        var isBusy: Bool {
+            switch self {
+            case .switching, .disconnected, .reconnecting:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
+    struct ScopeSwitchCandidate: Identifiable, Hashable {
+        let id: String
+        let name: String
+        let path: String
+        let type: String
     }
 
     /// LAN allows HTTP; WAN requires HTTPS.
@@ -132,9 +174,18 @@ final class AppState {
     private static let aiBuilderLastOKTestedAtKey = "aiBuilderLastOKTestedAt"
     private static let draftInputsBySessionKey = "draftInputsBySession"
     private static let selectedModelBySessionKey = "selectedModelBySession"
+    private static let recentModelsKey = "recentModels"
     private static let showArchivedSessionsKey = "showArchivedSessions"
     private static let selectedProjectWorktreeKey = "selectedProjectWorktree"
     private static let customProjectPathKey = "customProjectPath"
+    private static let scopeConnectionHistoryKey = "scopeConnectionHistory"
+
+    private static let openAIProviderID = "openai"
+    private static let preferredOpenAIModelIDs = [
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.2",
+    ]
 
     init() {
         if let storedServer = UserDefaults.standard.string(forKey: Self.serverURLKey) {
@@ -177,6 +228,11 @@ final class AppState {
            let decoded = try? JSONDecoder().decode([String: String].self, from: data) {
             selectedModelIDBySessionID = decoded
         }
+
+        if let data = UserDefaults.standard.data(forKey: Self.recentModelsKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            recentModelIDs = decoded
+        }
     }
 
     // Unsent composer drafts per session.
@@ -184,6 +240,7 @@ final class AppState {
 
     // Selected model (providerID/modelID) per session.
     private var selectedModelIDBySessionID: [String: String] = [:]
+    private var recentModelIDs: [String] = []
 
     private func persistSelectedModelMap() {
         if selectedModelIDBySessionID.isEmpty {
@@ -192,6 +249,16 @@ final class AppState {
         }
         if let data = try? JSONEncoder().encode(selectedModelIDBySessionID) {
             UserDefaults.standard.set(data, forKey: Self.selectedModelBySessionKey)
+        }
+    }
+
+    private func persistRecentModels() {
+        if recentModelIDs.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.recentModelsKey)
+            return
+        }
+        if let data = try? JSONEncoder().encode(recentModelIDs) {
+            UserDefaults.standard.set(data, forKey: Self.recentModelsKey)
         }
     }
 
@@ -355,6 +422,53 @@ final class AppState {
             .filter { showArchivedSessions || $0.time.archived == nil }
             .sorted { $0.time.updated > $1.time.updated }
     }
+
+    struct SessionGroup: Identifiable {
+        let id: String
+        let title: String
+        let sessions: [Session]
+    }
+
+    var groupedSessions: [SessionGroup] {
+        let parentSessions = sortedSessions.filter { $0.parentID == nil || $0.parentID!.isEmpty }
+        let calendar = Calendar.current
+        let now = Date()
+        let startOfToday = calendar.startOfDay(for: now)
+        let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday)!
+        let startOfWeek = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? startOfToday
+
+        var today: [Session] = []
+        var yesterday: [Session] = []
+        var thisWeek: [Session] = []
+        var earlier: [Session] = []
+
+        for session in parentSessions {
+            let date = Date(timeIntervalSince1970: TimeInterval(session.time.updated) / 1000)
+            if date >= startOfToday {
+                today.append(session)
+            } else if date >= startOfYesterday {
+                yesterday.append(session)
+            } else if date >= startOfWeek {
+                thisWeek.append(session)
+            } else {
+                earlier.append(session)
+            }
+        }
+
+        var groups: [SessionGroup] = []
+        if !today.isEmpty { groups.append(SessionGroup(id: "today", title: L10n.t(.sessionsGroupToday), sessions: today)) }
+        if !yesterday.isEmpty { groups.append(SessionGroup(id: "yesterday", title: L10n.t(.sessionsGroupYesterday), sessions: yesterday)) }
+        if !thisWeek.isEmpty { groups.append(SessionGroup(id: "thisWeek", title: L10n.t(.sessionsGroupThisWeek), sessions: thisWeek)) }
+        if !earlier.isEmpty { groups.append(SessionGroup(id: "earlier", title: L10n.t(.sessionsGroupEarlier), sessions: earlier)) }
+        return groups
+    }
+
+    func childSessions(for parentID: String) -> [Session] {
+        sessions
+            .filter { $0.parentID == parentID }
+            .sorted { $0.time.updated > $1.time.updated }
+    }
+
     var currentSessionID: String? { get { sessionStore.currentSessionID } set { sessionStore.currentSessionID = newValue } }
     var sessionStatuses: [String: SessionStatus] { get { sessionStore.sessionStatuses } set { sessionStore.sessionStatuses = newValue } }
 
@@ -363,13 +477,9 @@ final class AppState {
     var streamingPartTexts: [String: String] { get { messageStore.streamingPartTexts } set { messageStore.streamingPartTexts = newValue } }
 
     var modelPresets: [ModelPreset] = [
-        ModelPreset(displayName: "GLM-5", providerID: "zai-coding-plan", modelID: "glm-5"),
-        ModelPreset(displayName: "Opus 4.6", providerID: "anthropic", modelID: "claude-opus-4-6"),
-        ModelPreset(displayName: "Sonnet 4.6", providerID: "anthropic", modelID: "claude-sonnet-4-6"),
         ModelPreset(displayName: "GPT-5.3 Codex", providerID: "openai", modelID: "gpt-5.3-codex"),
+        ModelPreset(displayName: "GPT-5.3 Codex Spark", providerID: "openai", modelID: "gpt-5.3-codex-spark"),
         ModelPreset(displayName: "GPT-5.2", providerID: "openai", modelID: "gpt-5.2"),
-        ModelPreset(displayName: "Gemini 3.1 Pro", providerID: "google", modelID: "gemini-3.1-pro-preview"),
-        ModelPreset(displayName: "Gemini 3 Flash", providerID: "google", modelID: "gemini-3-flash-preview"),
     ]
     var selectedModelIndex: Int = 0
     
@@ -470,6 +580,42 @@ final class AppState {
     var fileSearchQuery: String { get { fileStore.fileSearchQuery } set { fileStore.fileSearchQuery = newValue } }
     var fileSearchResults: [String] { get { fileStore.fileSearchResults } set { fileStore.fileSearchResults = newValue } }
 
+    // MARK: - Server Environment (detected at runtime, not persisted)
+    var serverHomePath: String?
+    var serverOpencodeBinary: String?
+    var serverUsesLaunchd: Bool = false
+    var isDetectingServerEnv: Bool = false
+    private var hasDetectedServerEnv: Bool = false
+
+    // MARK: - Target File Tree (for Section 1 display)
+    var targetTreeRoot: [FileNode] = []
+    var targetExpandedPaths: Set<String> = []
+    var targetChildrenCache: [String: [FileNode]] = [:]
+
+    // MARK: - Scope Switch
+    var desktopScopeCandidates: [ScopeSwitchCandidate] = []
+    var aiTestScopeCandidates: [ScopeSwitchCandidate] = []
+    var isLoadingScopeCandidates: Bool = false
+    var targetScopeSwitchStatus: TargetScopeSwitchStatus = .idle
+    var targetScopeSwitchProgressText: String?
+    var targetScopeSwitchErrorText: String?
+    var targetScopeSwitchTargetPath: String?
+    var targetScopeSwitchSessionID: String?
+    var targetScopeSwitchUpdatedAt: Date?
+
+    private var targetScopeSwitchTask: Task<Void, Never>?
+
+    /// Dynamic desktop path derived from server HOME
+    var desktopRootPath: String? { serverHomePath.map { $0 + "/Desktop" } }
+    /// Dynamic AI_test folder path derived from server HOME
+    var aiTestFolderPath: String? { serverHomePath.map { $0 + "/Desktop/AI_test" } }
+
+    /// Connection history: only manual Connect operations, persisted in UserDefaults (max 10)
+    var scopeConnectionHistory: [String] {
+        get { UserDefaults.standard.stringArray(forKey: Self.scopeConnectionHistoryKey) ?? [] }
+        set { UserDefaults.standard.set(Array(newValue.prefix(10)), forKey: Self.scopeConnectionHistoryKey) }
+    }
+
     // Provider config cache (for context usage ring)
     var providersResponse: ProvidersResponse? = nil
     var providerModelsIndex: [String: ProviderModel] = [:]
@@ -497,6 +643,32 @@ final class AppState {
     var selectedModel: ModelPreset? {
         guard modelPresets.indices.contains(selectedModelIndex) else { return nil }
         return modelPresets[selectedModelIndex]
+    }
+
+    struct ModelProviderGroup: Identifiable {
+        var id: String { providerID }
+        let providerID: String
+        let displayName: String
+        let presets: [ModelPreset]
+    }
+
+    var modelPresetGroups: [ModelProviderGroup] {
+        let grouped = Dictionary(grouping: modelPresets, by: { $0.providerID })
+        let names = providerDisplayNamesByID
+        return grouped
+            .map { providerID, presets in
+                ModelProviderGroup(
+                    providerID: providerID,
+                    displayName: names[providerID] ?? providerID,
+                    presets: presets
+                )
+            }
+            .sorted { Self.providerSortKey($0.providerID) < Self.providerSortKey($1.providerID) }
+    }
+
+    var recentModelPresets: [ModelPreset] {
+        recentModelIDs
+            .compactMap { id in modelPresets.first(where: { $0.id == id }) }
     }
     
     var selectedAgent: AgentInfo? {
@@ -550,6 +722,7 @@ final class AppState {
     func setSelectedModelIndex(_ index: Int) {
         guard modelPresets.indices.contains(index) else { return }
         selectedModelIndex = index
+        noteModelUsage(modelPresets[index].id)
         guard let sessionID = currentSessionID else { return }
         selectedModelIDBySessionID[sessionID] = modelPresets[index].id
         persistSelectedModelMap()
@@ -563,9 +736,19 @@ final class AppState {
 
     private func applySavedModelForCurrentSession() {
         guard let sessionID = currentSessionID else { return }
-        guard let saved = selectedModelIDBySessionID[sessionID] else { return }
-        guard let idx = modelPresets.firstIndex(where: { $0.id == saved }) else { return }
+        guard let saved = selectedModelIDBySessionID[sessionID] else {
+            selectedModelIndex = Self.preferredModelIndex(in: modelPresets)
+            return
+        }
+        guard let idx = modelPresets.firstIndex(where: { $0.id == saved }) else {
+            selectedModelIndex = Self.preferredModelIndex(in: modelPresets)
+            noteModelUsage(modelPresets[selectedModelIndex].id)
+            selectedModelIDBySessionID[sessionID] = modelPresets[selectedModelIndex].id
+            persistSelectedModelMap()
+            return
+        }
         selectedModelIndex = idx
+        noteModelUsage(modelPresets[idx].id)
     }
 
     private func inferAndStoreModelForCurrentSessionIfMissing() {
@@ -573,9 +756,10 @@ final class AppState {
         guard selectedModelIDBySessionID[sessionID] == nil else { return }
 
         guard let info = messages.reversed().compactMap({ $0.info.resolvedModel }).first else { return }
-        guard let idx = modelPresets.firstIndex(where: { $0.providerID == info.providerID && $0.modelID == info.modelID }) else { return }
+        guard let idx = modelPresetIndex(providerID: info.providerID, modelID: info.modelID) else { return }
 
         selectedModelIndex = idx
+        noteModelUsage(modelPresets[idx].id)
         selectedModelIDBySessionID[sessionID] = modelPresets[idx].id
         persistSelectedModelMap()
     }
@@ -600,10 +784,16 @@ final class AppState {
     }
 
     func configure(serverURL: String, username: String? = nil, password: String? = nil) {
-        // Keep raw user input; security normalization happens at request time.
+        let urlChanged = self.serverURL != serverURL
         self.serverURL = serverURL
         self.username = username ?? ""
         self.password = password ?? ""
+        if urlChanged {
+            serverHomePath = nil
+            hasDetectedServerEnv = false
+            _dedicatedScopeSwitchSessionID = nil
+            serverCurrentProjectWorktree = nil
+        }
     }
 
     func testConnection() async {
@@ -633,6 +823,7 @@ final class AppState {
         do {
             projects = try await apiClient.projects()
             serverCurrentProjectWorktree = (try? await apiClient.projectCurrent())?.worktree
+            inferServerHomePath()
         } catch {
             Self.logger.warning("loadProjects failed: \(error.localizedDescription)")
             projects = []
@@ -644,7 +835,7 @@ final class AppState {
         guard isConnected else { return }
         do {
             let directory = effectiveProjectDirectory
-            let loaded = try await apiClient.sessions(directory: directory, limit: 100)
+            let loaded = try await apiClient.sessions(directory: directory, limit: 500)
             let archivedCount = loaded.filter { $0.time.archived != nil }.count
             Self.logger.debug("loadSessions: directory=\(directory ?? "nil", privacy: .public) count=\(loaded.count, privacy: .public) archived=\(archivedCount, privacy: .public) ids=\(loaded.prefix(5).map(\.id).joined(separator: ","), privacy: .public)")
 
@@ -753,6 +944,7 @@ final class AppState {
             sessions.insert(session, at: 0)
             currentSessionID = session.id
             if let m = selectedModel {
+                noteModelUsage(m.id)
                 selectedModelIDBySessionID[session.id] = m.id
                 persistSelectedModelMap()
             }
@@ -966,6 +1158,565 @@ final class AppState {
         }
     }
 
+    // MARK: - Server Environment Detection
+
+    /// Derive server HOME from a known absolute path like "/Users/xxx/Desktop/..."
+    nonisolated static func deriveHomePath(from absolutePath: String?) -> String? {
+        guard let path = absolutePath else { return nil }
+        let prefix = "/Users/"
+        guard path.hasPrefix(prefix) else { return nil }
+        let afterUsers = path.dropFirst(prefix.count)
+        guard let slashIndex = afterUsers.firstIndex(of: "/") else {
+            return String(path)
+        }
+        return String(path.prefix(upTo: slashIndex))
+    }
+
+    /// Infer serverHomePath from worktree. Re-derives on every call so that
+    /// switching between machines (different /Users/xxx) is handled correctly.
+    private func inferServerHomePath() {
+        guard let home = Self.deriveHomePath(from: serverCurrentProjectWorktree) else {
+            if serverHomePath != nil {
+                Self.scopeLog("[SCOPE] worktree '\(serverCurrentProjectWorktree ?? "nil")' can't derive home, clearing stale serverHomePath")
+                serverHomePath = nil
+                hasDetectedServerEnv = false
+                _dedicatedScopeSwitchSessionID = nil
+            }
+            return
+        }
+        if home != serverHomePath {
+            let prev = serverHomePath
+            serverHomePath = home
+            hasDetectedServerEnv = false
+            _dedicatedScopeSwitchSessionID = nil
+            Self.logger.notice("env.infer home=\(home, privacy: .public) (prev=\(prev ?? "nil", privacy: .public)) from worktree")
+        }
+    }
+
+    func detectServerEnvironment() async {
+        guard isConnected, !hasDetectedServerEnv else { return }
+
+        inferServerHomePath()
+
+        isDetectingServerEnv = true
+        defer { isDetectingServerEnv = false }
+
+        do {
+            let sessionID = try await ensureScopeSwitchSessionID()
+
+            if serverHomePath == nil {
+                let homeOutput = try await runScopeSwitchShellCommand(
+                    sessionID: sessionID,
+                    command: "echo $HOME"
+                )
+                serverHomePath = homeOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            let binaryOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: "which opencode 2>/dev/null || find $HOME/.npm-global -name opencode -path '*/bin/opencode' 2>/dev/null | head -1 || find $HOME/.opencode -name opencode -path '*/bin/opencode' 2>/dev/null | head -1"
+            )
+            let binary = binaryOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !binary.isEmpty {
+                serverOpencodeBinary = binary
+            }
+
+            let launchdOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: "launchctl list 2>/dev/null | grep com.opencode.server || echo ''"
+            )
+            serverUsesLaunchd = !launchdOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+            hasDetectedServerEnv = true
+            Self.logger.notice("env.detect home=\(self.serverHomePath ?? "nil", privacy: .public) binary=\(self.serverOpencodeBinary ?? "nil", privacy: .public) launchd=\(self.serverUsesLaunchd, privacy: .public)")
+        } catch {
+            Self.logger.warning("detectServerEnvironment shell probe failed: \(error.localizedDescription)")
+            if serverHomePath != nil {
+                hasDetectedServerEnv = true
+            }
+        }
+    }
+
+    // MARK: - Target File Tree
+
+    func loadTargetTree() async {
+        guard let worktree = serverCurrentProjectWorktree, !worktree.isEmpty else {
+            targetTreeRoot = []
+            return
+        }
+        do {
+            targetTreeRoot = try await apiClient.fileList(path: "")
+            targetExpandedPaths = []
+            targetChildrenCache = [:]
+        } catch {
+            Self.logger.warning("loadTargetTree failed for worktree=\(worktree, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            targetTreeRoot = []
+        }
+    }
+
+    func loadTargetChildren(path: String) async -> [FileNode] {
+        do {
+            let children = try await apiClient.fileList(path: path)
+            targetChildrenCache[path] = children
+            return children
+        } catch {
+            targetChildrenCache[path] = []
+            return []
+        }
+    }
+
+    func toggleTargetExpanded(_ path: String) {
+        if targetExpandedPaths.contains(path) {
+            targetExpandedPaths.remove(path)
+        } else {
+            targetExpandedPaths.insert(path)
+        }
+    }
+
+    func isTargetExpanded(_ path: String) -> Bool {
+        targetExpandedPaths.contains(path)
+    }
+
+    func cachedTargetChildren(for path: String) -> [FileNode]? {
+        targetChildrenCache[path]
+    }
+
+    // MARK: - Connection History
+
+    func addToConnectionHistory(_ path: String) {
+        var history = scopeConnectionHistory
+        history.removeAll { $0 == path }
+        history.insert(path, at: 0)
+        scopeConnectionHistory = history
+    }
+
+    /// Translate a path's /Users/xxx prefix to match the current server home.
+    func translatePathToCurrentServer(_ path: String) -> String {
+        guard let currentHome = serverHomePath else { return path }
+        guard let pathHome = Self.deriveHomePath(from: path) else { return path }
+        if pathHome == currentHome { return path }
+        return currentHome + path.dropFirst(pathHome.count)
+    }
+
+    /// Connection history excluding current worktree, with paths translated to the current server.
+    var connectionHistoryForDisplay: [String] {
+        let current = serverCurrentProjectWorktree ?? ""
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in scopeConnectionHistory {
+            let translated = translatePathToCurrentServer(raw)
+            if translated == current { continue }
+            if seen.insert(translated).inserted {
+                result.append(translated)
+            }
+        }
+        return result
+    }
+
+    // MARK: - Scope Switch Candidates
+
+    /// Parse `ls -1p` output into ScopeSwitchCandidate array.
+    /// `ls -1p` appends "/" to directory names.
+    private func parseLsOutput(_ output: String, parentPath: String) -> [ScopeSwitchCandidate] {
+        output
+            .split(separator: "\n")
+            .compactMap { line -> ScopeSwitchCandidate? in
+                let raw = String(line).trimmingCharacters(in: .whitespaces)
+                guard !raw.isEmpty else { return nil }
+                let isDir = raw.hasSuffix("/")
+                let name = isDir ? String(raw.dropLast()) : raw
+                guard !name.isEmpty else { return nil }
+                let path = parentPath + "/" + name
+                return ScopeSwitchCandidate(
+                    id: path, name: name, path: path,
+                    type: isDir ? "directory" : "file"
+                )
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func loadScopeSwitchCandidates() async {
+        guard isConnected else { return }
+
+        inferServerHomePath()
+
+        isLoadingScopeCandidates = true
+        defer { isLoadingScopeCandidates = false }
+
+        guard let home = serverHomePath else {
+            if !hasDetectedServerEnv { await detectServerEnvironment() }
+            guard serverHomePath != nil else { return }
+            await loadScopeSwitchCandidates()
+            return
+        }
+
+        let desktopPath = home + "/Desktop"
+        let aiTestPath = home + "/Desktop/AI_test"
+
+        do {
+            let sessionID = try await ensureScopeSwitchSessionID()
+
+            let desktopOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: "ls -1p '\(desktopPath)' 2>/dev/null"
+            )
+            desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
+
+            let aiTestOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: "ls -1p '\(aiTestPath)' 2>/dev/null"
+            )
+            aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
+                .filter { $0.type == "directory" }
+        } catch {
+            Self.logger.warning("loadScopeSwitchCandidates shell failed: \(error.localizedDescription)")
+        }
+    }
+
+    func startTargetScopeSwitch(path: String) {
+        let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        guard !targetScopeSwitchStatus.isBusy else { return }
+
+        Self.logger.notice("scope.switch start requested path=\(normalized, privacy: .public)")
+        Self.scopeLog("[SCOPE] start requested path=\(normalized)")
+
+        targetScopeSwitchTask?.cancel()
+        targetScopeSwitchTask = Task { [weak self] in
+            await self?.runTargetScopeSwitch(path: normalized)
+        }
+    }
+
+    func cancelTargetScopeSwitch() {
+        Self.scopeLog("[SCOPE] user cancelled scope switch")
+        targetScopeSwitchTask?.cancel()
+        targetScopeSwitchTask = nil
+        targetScopeSwitchStatus = .idle
+        targetScopeSwitchProgressText = nil
+        targetScopeSwitchErrorText = nil
+        targetScopeSwitchTargetPath = nil
+        targetScopeSwitchSessionID = nil
+    }
+
+    private func runTargetScopeSwitch(path: String) async {
+        Self.scopeLog("[SCOPE] ========== START scope switch ==========")
+        Self.scopeLog("[SCOPE] target path=\(path)")
+        Self.scopeLog("[SCOPE] current worktree=\(serverCurrentProjectWorktree ?? "nil")")
+        Self.scopeLog("[SCOPE] serverHomePath=\(serverHomePath ?? "nil")")
+        Self.scopeLog("[SCOPE] hasDetectedServerEnv=\(hasDetectedServerEnv)")
+        Self.scopeLog("[SCOPE] serverUsesLaunchd=\(serverUsesLaunchd)")
+        Self.scopeLog("[SCOPE] serverOpencodeBinary=\(serverOpencodeBinary ?? "nil")")
+
+        if serverCurrentProjectWorktree == path {
+            Self.scopeLog("[SCOPE] already at target path, marking connected")
+            targetScopeSwitchStatus = .connected
+            targetScopeSwitchTargetPath = path
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusConnected)
+            targetScopeSwitchErrorText = nil
+            targetScopeSwitchUpdatedAt = Date()
+            addToConnectionHistory(path)
+            return
+        }
+
+        targetScopeSwitchStatus = .switching
+        targetScopeSwitchTargetPath = path
+        targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusSwitching)
+        targetScopeSwitchErrorText = nil
+        targetScopeSwitchUpdatedAt = Date()
+
+        if !hasDetectedServerEnv {
+            Self.scopeLog("[SCOPE] step 0: detecting server environment...")
+            await detectServerEnvironment()
+            Self.scopeLog("[SCOPE] step 0: env detected. home=\(serverHomePath ?? "nil") launchd=\(serverUsesLaunchd) binary=\(serverOpencodeBinary ?? "nil")")
+        }
+
+        // --- Step 1: Verify target path ---
+        var sessionID: String
+        do {
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStepVerifyPath)
+            sessionID = try await ensureScopeSwitchSessionID()
+            targetScopeSwitchSessionID = sessionID
+            Self.scopeLog("[SCOPE] step 1: session=\(sessionID)")
+
+            let lsCommand = "ls -d \(shellQuote(path))"
+            let lsResult = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: lsCommand,
+                mustContain: path
+            )
+            Self.scopeLog("[SCOPE] step 1: path verified. ls output=\(lsResult)")
+        } catch {
+            setScopeSwitchFailed(error.localizedDescription, path: path)
+            Self.scopeLog("[SCOPE] FAILED at step 1 (verify path): \(error)")
+            return
+        }
+
+        // --- Step 2: Find server process ---
+        var pid: Int
+        do {
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStepFindProcess)
+            let psCommand = "ps aux | grep \"[o]pencode.*serve\""
+            let processOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: psCommand
+            )
+            Self.scopeLog("[SCOPE] step 2: ps output=\(processOutput)")
+
+            guard let found = extractServePID(from: processOutput)
+                    ?? extractFirstInteger(from: processOutput) else {
+                throw NSError(
+                    domain: "ScopeSwitch", code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: L10n.t(.scopeSwitchProcessNotFound)]
+                )
+            }
+            pid = found
+            Self.scopeLog("[SCOPE] step 2: PID=\(pid)")
+        } catch {
+            setScopeSwitchFailed(error.localizedDescription, path: path)
+            Self.scopeLog("[SCOPE] FAILED at step 2 (find process): \(error)")
+            return
+        }
+
+        // --- Step 3: Write restart script to /tmp ---
+        do {
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStepWriteScript)
+            let scriptLines = buildScopeRestartScript(path: path, pid: pid)
+            let printfContent = scriptLines.replacingOccurrences(of: "'", with: "'\\''")
+            let writeCommand = "printf '\(printfContent)\\n' > /tmp/opencode-restart.sh && chmod +x /tmp/opencode-restart.sh && cat /tmp/opencode-restart.sh | head -1"
+            Self.scopeLog("[SCOPE] step 3: write command=\(writeCommand)")
+            let writeOutput = try await runScopeSwitchShellCommand(
+                sessionID: sessionID,
+                command: writeCommand
+            )
+            Self.scopeLog("[SCOPE] step 3: script written. output=\(writeOutput)")
+
+            if !writeOutput.contains("#!/bin/bash") {
+                throw NSError(
+                    domain: "ScopeSwitch", code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "Restart script is empty or malformed: \(writeOutput)"]
+                )
+            }
+        } catch {
+            setScopeSwitchFailed(error.localizedDescription, path: path)
+            Self.scopeLog("[SCOPE] FAILED at step 3 (write script): \(error)")
+            return
+        }
+
+        // --- Step 4: Execute restart script in background ---
+        do {
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStepRestart)
+            let execOutput: String
+            do {
+                execOutput = try await runScopeSwitchShellCommand(
+                    sessionID: sessionID,
+                    command: "nohup /tmp/opencode-restart.sh >/dev/null 2>&1 &"
+                )
+                Self.scopeLog("[SCOPE] step 4: exec returned output=\(execOutput)")
+            } catch {
+                Self.scopeLog("[SCOPE] step 4: exec threw (expected after kill): \(error)")
+            }
+        }
+
+        // --- Step 5: Monitor for server restart ---
+        disconnectSSE()
+        targetScopeSwitchStatus = .disconnected
+        targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusDisconnected)
+        Self.scopeLog("[SCOPE] step 5: entering monitor phase...")
+
+        await monitorTargetScopeSwitchProgress(expectedPath: path, sessionID: sessionID)
+        Self.scopeLog("[SCOPE] ========== END scope switch, final status=\(targetScopeSwitchStatus) ==========")
+    }
+
+    private func buildScopeRestartScript(path: String, pid: Int) -> String {
+        let plistPath = "$HOME/Library/LaunchAgents/com.opencode.server.plist"
+        if serverUsesLaunchd {
+            return [
+                "#!/bin/bash",
+                "sleep 1",
+                "plutil -replace WorkingDirectory -string \(shellQuote(path)) \"\(plistPath)\"",
+                "launchctl unload \"\(plistPath)\"",
+                "sleep 1",
+                "launchctl load \"\(plistPath)\"",
+            ].joined(separator: "\\n")
+        }
+        let binary = serverOpencodeBinary ?? "opencode"
+        return [
+            "#!/bin/bash",
+            "sleep 1",
+            "kill \(pid)",
+            "sleep 2",
+            "cd \(shellQuote(path)) || exit 1",
+            "exec \(shellQuote(binary)) serve --port 4096 >/tmp/opencode-server.log 2>&1",
+        ].joined(separator: "\\n")
+    }
+
+    private func setScopeSwitchFailed(_ message: String, path: String) {
+        targetScopeSwitchStatus = .failed
+        targetScopeSwitchErrorText = message
+        targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusFailed)
+        targetScopeSwitchUpdatedAt = Date()
+    }
+
+    private var _dedicatedScopeSwitchSessionID: String?
+
+    private func ensureScopeSwitchSessionID() async throws -> String {
+        if let existing = _dedicatedScopeSwitchSessionID {
+            do {
+                _ = try await apiClient.session(sessionID: existing)
+                return existing
+            } catch {
+                Self.scopeLog("[SCOPE] dedicated scope session \(existing) invalid, will create new one")
+                _dedicatedScopeSwitchSessionID = nil
+            }
+        }
+
+        let created = try await apiClient.createSession(title: "Scope Switch")
+        _dedicatedScopeSwitchSessionID = created.id
+        Self.scopeLog("[SCOPE] created dedicated scope session \(created.id)")
+        return created.id
+    }
+
+    private func monitorTargetScopeSwitchProgress(expectedPath: String, sessionID: String) async {
+        let maxTicks = 30
+        let verifyAfterTick = 3
+        var observedDisconnect = false
+
+        Self.scopeLog("[SCOPE-MON] starting monitor loop, expecting path=\(expectedPath)")
+
+        for tick in 0..<maxTicks {
+            if Task.isCancelled {
+                Self.scopeLog("[SCOPE-MON] task cancelled at tick=\(tick)")
+                return
+            }
+            try? await Task.sleep(for: .seconds(1))
+
+            await testConnection()
+            targetScopeSwitchUpdatedAt = Date()
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStepWaiting, tick)
+
+            if tick % 5 == 0 || tick < 4 {
+                Self.scopeLog("[SCOPE-MON] tick=\(tick) isConnected=\(isConnected) observedDisconnect=\(observedDisconnect)")
+            }
+
+            if !isConnected {
+                observedDisconnect = true
+                targetScopeSwitchStatus = .disconnected
+                disconnectSSE()
+                continue
+            }
+
+            let shouldVerify = observedDisconnect || tick >= verifyAfterTick
+            guard shouldVerify else { continue }
+
+            Self.scopeLog("[SCOPE-MON] verifying CWD at tick=\(tick)...")
+            let verified = await verifyScopeSwitchCWD(expectedPath: expectedPath, sessionID: sessionID)
+            if verified {
+                serverCurrentProjectWorktree = expectedPath
+                targetScopeSwitchStatus = .connected
+                targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusConnected)
+                targetScopeSwitchErrorText = nil
+                targetScopeSwitchUpdatedAt = Date()
+                Self.logger.notice("scope.switch status=connected target=\(expectedPath, privacy: .public)")
+
+                addToConnectionHistory(expectedPath)
+                connectSSE()
+                await refreshAfterScopeSwitch(preservedWorktree: expectedPath)
+                await loadScopeSwitchCandidates()
+                await loadTargetTree()
+                return
+            }
+            Self.scopeLog("[SCOPE-MON] CWD verification failed, continuing...")
+        }
+
+        targetScopeSwitchStatus = .failed
+        targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusFailed)
+        targetScopeSwitchErrorText = L10n.t(.scopeSwitchTimeoutDetail)
+        targetScopeSwitchUpdatedAt = Date()
+        Self.logger.error("scope.switch timeout target=\(expectedPath, privacy: .public) session=\(sessionID, privacy: .public)")
+    }
+
+    private func verifyScopeSwitchCWD(expectedPath: String, sessionID: String) async -> Bool {
+        do {
+            let newSID = try await ensureScopeSwitchSessionID()
+            let output = try await runScopeSwitchShellCommand(
+                sessionID: newSID,
+                command: "plutil -extract WorkingDirectory raw $HOME/Library/LaunchAgents/com.opencode.server.plist 2>/dev/null || pwd"
+            )
+            let cwd = output.trimmingCharacters(in: .whitespacesAndNewlines)
+            Self.scopeLog("[SCOPE-MON] verifyCWD: plist/pwd=\(cwd) expected=\(expectedPath)")
+            return cwd == expectedPath
+        } catch {
+            Self.scopeLog("[SCOPE-MON] verifyCWD failed: \(error)")
+            return false
+        }
+    }
+
+    private func runScopeSwitchShellCommand(
+        sessionID: String,
+        command: String,
+        mustContain token: String? = nil
+    ) async throws -> String {
+        let agent = selectedAgent?.name ?? "build"
+        var effectiveSessionID = sessionID
+
+        do {
+            let result = try await apiClient.shell(sessionID: effectiveSessionID, command: command, agent: agent)
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let token, !output.contains(token) {
+                throw NSError(
+                    domain: "ScopeSwitch",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: output.isEmpty ? L10n.t(.scopeSwitchStatusFailed) : output]
+                )
+            }
+            return output
+        } catch let error as APIError {
+            guard case .httpError(let statusCode, _) = error, statusCode == 404 else {
+                throw error
+            }
+            Self.scopeLog("[SCOPE] shell 404 for session=\(effectiveSessionID), creating fresh scope session...")
+            let created = try await apiClient.createSession(title: "Scope Switch")
+            effectiveSessionID = created.id
+            _dedicatedScopeSwitchSessionID = created.id
+        }
+
+        let result = try await apiClient.shell(sessionID: effectiveSessionID, command: command, agent: agent)
+        let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let token, !output.contains(token) {
+            throw NSError(
+                domain: "ScopeSwitch",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: output.isEmpty ? L10n.t(.scopeSwitchStatusFailed) : output]
+            )
+        }
+        return output
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'")
+        return "'\(escaped)'"
+    }
+
+    private func extractServePID(from text: String) -> Int? {
+        for line in text.split(separator: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.contains("opencode"), trimmed.contains("serve") else { continue }
+            let columns = trimmed.split(whereSeparator: { $0.isWhitespace })
+            guard columns.count > 1, let pid = Int(columns[1]) else { continue }
+            return pid
+        }
+        return nil
+    }
+
+    private func extractFirstInteger(from text: String) -> Int? {
+        for token in text.split(whereSeparator: { !$0.isNumber }) {
+            if let value = Int(token) {
+                return value
+            }
+        }
+        return nil
+    }
+
     func loadFileContent(path: String) async throws -> FileContent {
         let resolved = PathNormalizer.resolveWorkspaceRelativePath(path, workspaceDirectory: currentSession?.directory)
         let fc = try await apiClient.fileContent(path: resolved)
@@ -979,6 +1730,13 @@ final class AppState {
             }
         }
         return fc
+    }
+
+    /// Optimized image loading: all base64/JSON heavy lifting stays on APIClient actor.
+    /// Only the decoded binary Data crosses the actor boundary back to MainActor.
+    func loadImageData(path: String) async throws -> Data {
+        let resolved = PathNormalizer.resolveWorkspaceRelativePath(path, workspaceDirectory: currentSession?.directory)
+        return try await apiClient.imageData(path: resolved)
     }
 
     func transcribeAudio(audioFileURL: URL, language: String? = nil) async throws -> String {
@@ -1221,11 +1979,11 @@ final class AppState {
     // so deinit-based cleanup is not critical. The disconnectSSE() method above
     // should be called explicitly when needed (e.g., on background/terminate).
 
-    /// 是否应处理 message.updated：有 sessionID 时需匹配当前 session，否则保持原行为
+    /// 是否应处理 message.updated：必须有明确的 sessionID 且匹配当前 session
     nonisolated static func shouldProcessMessageEvent(eventSessionID: String?, currentSessionID: String?) -> Bool {
-        guard currentSessionID != nil else { return false }
-        if let sid = eventSessionID { return sid == currentSessionID }
-        return true  // 无 sessionID 时保持原行为（向后兼容）
+        guard let currentSessionID else { return false }
+        guard let sid = eventSessionID else { return false }
+        return sid == currentSessionID
     }
 
     /// Async request result should only apply when requested session is still current.
@@ -1262,6 +2020,11 @@ final class AppState {
                         streamingReasoningPart = nil
                         streamingPartTexts = [:]
                         streamingDraftMessageIDs.removeAll()
+
+                        if isBusySession(prev) {
+                            await loadMessages()
+                            await loadSessionDiff()
+                        }
                     }
                 }
             }
@@ -1297,15 +2060,20 @@ final class AppState {
         case "message.updated":
             let eventSessionID = props["sessionID"]?.value as? String
             if Self.shouldProcessMessageEvent(eventSessionID: eventSessionID, currentSessionID: currentSessionID) {
-                streamingReasoningPart = nil
-                streamingPartTexts = [:]
-                streamingDraftMessageIDs.removeAll()
-                await loadMessages()
-                await loadSessionDiff()
+                if isBusy {
+                    streamingReasoningPart = nil
+                    streamingPartTexts = [:]
+                    streamingDraftMessageIDs.removeAll()
+                    await loadMessages()
+                    await loadSessionDiff()
+                } else {
+                    await loadSessionDiff()
+                }
             }
         case "message.part.updated":
             if let sessionID = props["sessionID"]?.value as? String,
-               sessionID == currentSessionID {
+               sessionID == currentSessionID,
+               isBusy {
                 let partObj = props["part"]?.value as? [String: Any]
                 let msgID = partObj?["messageID"] as? String
                 let partID = partObj?["id"] as? String
@@ -1660,6 +2428,30 @@ final class AppState {
             await loadSessionTodos()
             await loadFileTree()
             await loadFileStatus()
+            await loadScopeSwitchCandidates()
+            await loadTargetTree()
+            await syncSessionStatusesFromPoll()
+        }
+    }
+
+    /// Refresh after scope switch, preserving the worktree that we just verified.
+    private func refreshAfterScopeSwitch(preservedWorktree: String) async {
+        await testConnection()
+        if isConnected {
+            async let agentsResult = loadAgents()
+            async let providersResult = loadProvidersConfig()
+            await loadSessions()
+            _ = await agentsResult
+            _ = await providersResult
+            // Skip loadProjects() — it would overwrite serverCurrentProjectWorktree
+            // with the server's git-root-based worktree (often "/"), losing our scope path.
+            serverCurrentProjectWorktree = preservedWorktree
+            await loadMessages()
+            await refreshPendingPermissions()
+            await loadSessionDiff()
+            await loadSessionTodos()
+            await loadFileTree()
+            await loadFileStatus()
             await syncSessionStatusesFromPoll()
         }
     }
@@ -1677,9 +2469,160 @@ final class AppState {
                 }
             }
             providerModelsIndex = idx
+            applyModelPresets(buildModelPresets(from: resp))
         } catch {
             providerConfigError = error.localizedDescription
         }
+    }
+
+    private var providerDisplayNamesByID: [String: String] {
+        guard let providersResponse else { return [:] }
+        return providersResponse.providers.reduce(into: [:]) { result, provider in
+            let name = provider.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let name, !name.isEmpty {
+                result[provider.id] = name
+            }
+        }
+    }
+
+    private func applyModelPresets(_ presets: [ModelPreset]) {
+        guard !presets.isEmpty else { return }
+
+        let oldSelectedID = selectedModel?.id
+        modelPresets = presets
+
+        if let sessionID = currentSessionID,
+           let savedID = selectedModelIDBySessionID[sessionID],
+           let savedIndex = modelPresets.firstIndex(where: { $0.id == savedID }) {
+            selectedModelIndex = savedIndex
+            noteModelUsage(modelPresets[savedIndex].id)
+            return
+        }
+
+        if let oldSelectedID,
+           let oldIndex = modelPresets.firstIndex(where: { $0.id == oldSelectedID }) {
+            selectedModelIndex = oldIndex
+        } else {
+            selectedModelIndex = Self.preferredModelIndex(in: modelPresets)
+        }
+        noteModelUsage(modelPresets[selectedModelIndex].id)
+
+        if let sessionID = currentSessionID {
+            selectedModelIDBySessionID[sessionID] = modelPresets[selectedModelIndex].id
+            persistSelectedModelMap()
+        }
+    }
+
+    private func noteModelUsage(_ modelPresetID: String) {
+        guard !modelPresetID.isEmpty else { return }
+        recentModelIDs.removeAll { $0 == modelPresetID }
+        recentModelIDs.insert(modelPresetID, at: 0)
+        if recentModelIDs.count > 6 {
+            recentModelIDs = Array(recentModelIDs.prefix(6))
+        }
+        persistRecentModels()
+    }
+
+    private func buildModelPresets(from response: ProvidersResponse) -> [ModelPreset] {
+        var providers = response.providers.filter { !$0.models.isEmpty }
+        providers.sort { Self.providerSortKey($0.id) < Self.providerSortKey($1.id) }
+
+        var presets: [ModelPreset] = []
+        presets.reserveCapacity(providers.reduce(0) { $0 + $1.models.count })
+
+        for provider in providers {
+            let models = provider.models.values.sorted {
+                Self.modelSortKey(providerID: provider.id, modelID: $0.id, name: $0.name) < Self.modelSortKey(providerID: provider.id, modelID: $1.id, name: $1.name)
+            }
+
+            for model in models {
+                let modelID = model.id.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !modelID.isEmpty else { continue }
+                presets.append(
+                    ModelPreset(
+                        displayName: Self.displayName(providerID: provider.id, modelID: modelID, rawName: model.name),
+                        providerID: provider.id,
+                        modelID: modelID
+                    )
+                )
+            }
+        }
+
+        var seen: Set<String> = []
+        var deduped: [ModelPreset] = []
+        deduped.reserveCapacity(presets.count)
+        for preset in presets {
+            if seen.insert(preset.id).inserted {
+                deduped.append(preset)
+            }
+        }
+
+        return deduped.isEmpty ? modelPresets : deduped
+    }
+
+    private func modelPresetIndex(providerID: String, modelID: String) -> Int? {
+        if let exact = modelPresets.firstIndex(where: { $0.providerID == providerID && $0.modelID == modelID }) {
+            return exact
+        }
+
+        guard providerID == Self.openAIProviderID else { return nil }
+
+        if Self.preferredOpenAIModelIDs.contains(modelID) {
+            let preferredID = Self.preferredOpenAIModelIDs.first ?? "gpt-5.3-codex"
+            return modelPresets.firstIndex(where: {
+                $0.providerID == Self.openAIProviderID && $0.modelID == preferredID
+            })
+        }
+
+        return nil
+    }
+
+    private static func preferredModelIndex(in presets: [ModelPreset]) -> Int {
+        guard !presets.isEmpty else { return 0 }
+        for preferredID in preferredOpenAIModelIDs {
+            if let idx = presets.firstIndex(where: { $0.providerID == openAIProviderID && $0.modelID == preferredID }) {
+                return idx
+            }
+        }
+        if let firstOpenAI = presets.firstIndex(where: { $0.providerID == openAIProviderID }) {
+            return firstOpenAI
+        }
+        return 0
+    }
+
+    private static func providerSortKey(_ providerID: String) -> String {
+        providerID == openAIProviderID ? "0_\(providerID)" : "1_\(providerID)"
+    }
+
+    private static func modelSortKey(providerID: String, modelID: String, name: String?) -> String {
+        if providerID == openAIProviderID,
+           let rank = preferredOpenAIModelIDs.firstIndex(of: modelID) {
+            return String(format: "%02d_%@", rank, modelID)
+        }
+
+        let title = displayName(providerID: providerID, modelID: modelID, rawName: name)
+        return "99_\(title.lowercased())"
+    }
+
+    private static func displayName(providerID: String, modelID: String, rawName: String?) -> String {
+        let normalized = modelID.lowercased()
+        if providerID == openAIProviderID {
+            if normalized == "gpt-5.3-codex-spark" {
+                return "GPT-5.3 Codex Spark"
+            }
+            if normalized == "gpt-5.3-codex" {
+                return "GPT-5.3 Codex"
+            }
+            if normalized == "gpt-5.2" {
+                return "GPT-5.2"
+            }
+        }
+
+        if let rawName {
+            let cleaned = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !cleaned.isEmpty { return cleaned }
+        }
+        return modelID
     }
 }
 

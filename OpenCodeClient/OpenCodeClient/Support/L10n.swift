@@ -13,6 +13,8 @@ enum L10n {
 
         case commonOk
         case commonCancel
+        case commonEdit
+        case commonSave
 
         case navFiles
         case navSettings
@@ -162,6 +164,39 @@ enum L10n {
         case sessionsDeleteConfirmTitle
         case sessionsDeleteConfirmMessage
         case sessionsDeleteFailedTitle
+        case sessionsGroupToday
+        case sessionsGroupYesterday
+        case sessionsGroupThisWeek
+        case sessionsGroupEarlier
+
+        case focusAll
+        case focusDirectory
+
+        case filesCurrentTargetsTitle
+        case filesCurrentServerTarget
+        case filesNoCurrentTarget
+        case filesConnectionHistory
+        case filesSwitch
+        case filesCandidateTitle
+        case filesDesktopGroup
+        case filesAITestGroup
+        case filesConnect
+        case filesConnectInProgress
+        case filesDetectingEnv
+        case scopeSwitchStatusSwitching
+        case scopeSwitchStatusDisconnected
+        case scopeSwitchStatusReconnecting
+        case scopeSwitchStatusConnected
+        case scopeSwitchStatusFailed
+        case scopeSwitchTimeout
+        case scopeSwitchProcessNotFound
+        case scopeSwitchStepVerifyPath
+        case scopeSwitchStepFindProcess
+        case scopeSwitchStepWriteScript
+        case scopeSwitchStepRestart
+        case scopeSwitchStepWaiting
+        case scopeSwitchRetry
+        case scopeSwitchTimeoutDetail
 
         case fileLoading
         case fileError
@@ -209,6 +244,8 @@ enum L10n {
         Key.appSearchFilesTitle.rawValue: "Search files",
         Key.commonOk.rawValue: "OK",
         Key.commonCancel.rawValue: "Cancel",
+        Key.commonEdit.rawValue: "Edit",
+        Key.commonSave.rawValue: "Save",
         Key.navFiles.rawValue: "Files",
         Key.navSettings.rawValue: "Settings",
         Key.navPreview.rawValue: "Preview",
@@ -355,6 +392,37 @@ enum L10n {
         Key.sessionsDeleteConfirmTitle.rawValue: "Delete Session",
         Key.sessionsDeleteConfirmMessage.rawValue: "Delete this session and all its messages? This cannot be undone.",
         Key.sessionsDeleteFailedTitle.rawValue: "Delete Failed",
+        Key.sessionsGroupToday.rawValue: "Today",
+        Key.sessionsGroupYesterday.rawValue: "Yesterday",
+        Key.sessionsGroupThisWeek.rawValue: "This Week",
+        Key.sessionsGroupEarlier.rawValue: "Earlier",
+        Key.focusAll.rawValue: "All Files",
+        Key.focusDirectory.rawValue: "Focus",
+        Key.filesCurrentTargetsTitle.rawValue: "Current Target",
+        Key.filesCurrentServerTarget.rawValue: "Server active directory",
+        Key.filesNoCurrentTarget.rawValue: "No active target yet",
+        Key.filesConnectionHistory.rawValue: "Recent Connections",
+        Key.filesSwitch.rawValue: "Switch",
+        Key.filesCandidateTitle.rawValue: "Available Projects",
+        Key.filesDesktopGroup.rawValue: "Desktop",
+        Key.filesAITestGroup.rawValue: "AI_test Projects",
+        Key.filesConnect.rawValue: "Connect",
+        Key.filesConnectInProgress.rawValue: "Connecting",
+        Key.filesDetectingEnv.rawValue: "Detecting server environment...",
+        Key.scopeSwitchStatusSwitching.rawValue: "Switching target and restarting server...",
+        Key.scopeSwitchStatusDisconnected.rawValue: "Server disconnected, waiting for recovery...",
+        Key.scopeSwitchStatusReconnecting.rawValue: "Server reconnecting...",
+        Key.scopeSwitchStatusConnected.rawValue: "Connected successfully. Target scope updated.",
+        Key.scopeSwitchStatusFailed.rawValue: "Failed to switch target scope",
+        Key.scopeSwitchTimeout.rawValue: "Switch timed out. Please retry.",
+        Key.scopeSwitchProcessNotFound.rawValue: "Unable to find running OpenCode serve process.",
+        Key.scopeSwitchStepVerifyPath.rawValue: "[1/4] Verifying target path...",
+        Key.scopeSwitchStepFindProcess.rawValue: "[2/4] Finding server process...",
+        Key.scopeSwitchStepWriteScript.rawValue: "[3/4] Preparing restart script...",
+        Key.scopeSwitchStepRestart.rawValue: "[4/4] Restarting server...",
+        Key.scopeSwitchStepWaiting.rawValue: "Waiting for server recovery (%ds)...",
+        Key.scopeSwitchRetry.rawValue: "Retry",
+        Key.scopeSwitchTimeoutDetail.rawValue: "Server did not restart within the expected time. It may still be starting — you can retry.",
 
         Key.fileLoading.rawValue: "Loading...",
         Key.fileError.rawValue: "Error",
@@ -402,6 +470,8 @@ enum L10n {
         Key.appSearchFilesTitle.rawValue: "搜索文件",
         Key.commonOk.rawValue: "确定",
         Key.commonCancel.rawValue: "取消",
+        Key.commonEdit.rawValue: "修改",
+        Key.commonSave.rawValue: "保存",
         Key.navFiles.rawValue: "文件",
         Key.navSettings.rawValue: "设置",
         Key.navPreview.rawValue: "预览",
@@ -551,6 +621,37 @@ enum L10n {
         Key.sessionsDeleteConfirmTitle.rawValue: "删除会话",
         Key.sessionsDeleteConfirmMessage.rawValue: "确认删除这个会话及其全部消息吗？此操作无法撤销。",
         Key.sessionsDeleteFailedTitle.rawValue: "删除失败",
+        Key.sessionsGroupToday.rawValue: "今天",
+        Key.sessionsGroupYesterday.rawValue: "昨天",
+        Key.sessionsGroupThisWeek.rawValue: "本周",
+        Key.sessionsGroupEarlier.rawValue: "更早",
+        Key.focusAll.rawValue: "全部文件",
+        Key.focusDirectory.rawValue: "聚焦",
+        Key.filesCurrentTargetsTitle.rawValue: "当前目标",
+        Key.filesCurrentServerTarget.rawValue: "Server 当前目录",
+        Key.filesNoCurrentTarget.rawValue: "暂无目标目录",
+        Key.filesConnectionHistory.rawValue: "最近连接",
+        Key.filesSwitch.rawValue: "切换",
+        Key.filesCandidateTitle.rawValue: "可选项目",
+        Key.filesDesktopGroup.rawValue: "桌面",
+        Key.filesAITestGroup.rawValue: "AI_test 项目",
+        Key.filesConnect.rawValue: "连接",
+        Key.filesConnectInProgress.rawValue: "连接中",
+        Key.filesDetectingEnv.rawValue: "正在检测服务端环境...",
+        Key.scopeSwitchStatusSwitching.rawValue: "正在切换目标并重启服务...",
+        Key.scopeSwitchStatusDisconnected.rawValue: "服务已断连，等待恢复...",
+        Key.scopeSwitchStatusReconnecting.rawValue: "服务重连中...",
+        Key.scopeSwitchStatusConnected.rawValue: "连接成功，目标范围已更新。",
+        Key.scopeSwitchStatusFailed.rawValue: "目标范围切换失败",
+        Key.scopeSwitchTimeout.rawValue: "切换超时，请重试。",
+        Key.scopeSwitchProcessNotFound.rawValue: "未找到正在运行的 OpenCode serve 进程。",
+        Key.scopeSwitchStepVerifyPath.rawValue: "[1/4] 验证目标路径...",
+        Key.scopeSwitchStepFindProcess.rawValue: "[2/4] 查找服务进程...",
+        Key.scopeSwitchStepWriteScript.rawValue: "[3/4] 准备重启脚本...",
+        Key.scopeSwitchStepRestart.rawValue: "[4/4] 正在重启服务...",
+        Key.scopeSwitchStepWaiting.rawValue: "等待服务恢复 (%d秒)...",
+        Key.scopeSwitchRetry.rawValue: "重试",
+        Key.scopeSwitchTimeoutDetail.rawValue: "服务未在预期时间内重启，可能仍在启动中，可以尝试重试。",
 
         Key.fileLoading.rawValue: "加载中...",
         Key.fileError.rawValue: "错误",
@@ -602,7 +703,7 @@ enum L10n {
     static func t(_ key: Key, _ arguments: CVarArg...) -> String {
         let template = t(key)
         guard !arguments.isEmpty else { return template }
-        return String(format: template, locale: Locale.current, arguments)
+        return String(format: template, locale: Locale.current, arguments: arguments)
     }
 
     static func sessionsFiles(_ count: Int) -> String {

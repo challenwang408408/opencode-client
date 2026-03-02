@@ -63,27 +63,20 @@ private struct SessionsSidebarList: View {
     @State private var pendingDeleteSession: Session?
     @State private var deletingSessionID: String?
     @State private var deleteError: String?
+    @State private var expandedParentIDs: Set<String> = []
 
     var body: some View {
         List {
-            Section(L10n.t(.sessionsTitle)) {
-                ForEach(state.sortedSessions) { session in
-                    SessionRowView(
-                        session: session,
-                        status: state.sessionStatuses[session.id],
-                        isSelected: state.currentSessionID == session.id,
-                        isDeleting: deletingSessionID == session.id
-                    ) {
-                        state.selectSession(session)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button {
-                            pendingDeleteSession = session
-                        } label: {
-                            Label(L10n.t(.sessionsDelete), systemImage: "trash")
+            ForEach(state.groupedSessions) { group in
+                Section(header: Text(group.title)) {
+                    ForEach(group.sessions) { session in
+                        sessionRow(session)
+                        if expandedParentIDs.contains(session.id) {
+                            ForEach(state.childSessions(for: session.id)) { child in
+                                sessionRow(child)
+                                    .padding(.leading, 28)
+                            }
                         }
-                        .tint(.red)
-                        .disabled(deletingSessionID != nil)
                     }
                 }
             }
@@ -122,6 +115,44 @@ private struct SessionsSidebarList: View {
             if let deleteError {
                 Text(deleteError)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: Session) -> some View {
+        let children = state.childSessions(for: session.id)
+        let hasChildren = !children.isEmpty
+        let isExpanded = expandedParentIDs.contains(session.id)
+
+        SessionRowView(
+            session: session,
+            status: state.sessionStatuses[session.id],
+            isSelected: state.currentSessionID == session.id,
+            isDeleting: deletingSessionID == session.id,
+            childCount: children.count,
+            isExpanded: isExpanded,
+            isChild: session.parentID != nil && !session.parentID!.isEmpty
+        ) {
+            state.selectSession(session)
+        } onToggleExpand: {
+            if hasChildren {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    if isExpanded {
+                        expandedParentIDs.remove(session.id)
+                    } else {
+                        expandedParentIDs.insert(session.id)
+                    }
+                }
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button {
+                pendingDeleteSession = session
+            } label: {
+                Label(L10n.t(.sessionsDelete), systemImage: "trash")
+            }
+            .tint(.red)
+            .disabled(deletingSessionID != nil)
         }
     }
 

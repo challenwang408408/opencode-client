@@ -247,8 +247,8 @@ struct SessionFilteringTests {
         #expect(AppState.shouldProcessMessageEvent(eventSessionID: "s1", currentSessionID: nil) == false)
     }
 
-    @Test func shouldProcessWhenNoEventSessionIDForBackwardCompat() {
-        #expect(AppState.shouldProcessMessageEvent(eventSessionID: nil, currentSessionID: "s1") == true)
+    @Test func shouldNotProcessWhenNoEventSessionID() {
+        #expect(AppState.shouldProcessMessageEvent(eventSessionID: nil, currentSessionID: "s1") == false)
     }
 
     @Test func shouldApplySessionScopedResultWhenRequestedStillCurrent() {
@@ -1434,3 +1434,49 @@ struct ProjectSelectionTests {
     }
 }
 
+struct ScopeSwitchDirectoryTests {
+    @Test @MainActor func connectionHistoryForDisplayExcludesCurrent() {
+        let state = AppState()
+        state.serverCurrentProjectWorktree = "/Users/test/Desktop/AI_test/project-a"
+        state.scopeConnectionHistory = [
+            "/Users/test/Desktop/AI_test/project-a",
+            "/Users/test/Desktop/AI_test/project-b",
+            "/Users/test/Desktop/AI_test/project-c",
+        ]
+
+        #expect(state.connectionHistoryForDisplay == [
+            "/Users/test/Desktop/AI_test/project-b",
+            "/Users/test/Desktop/AI_test/project-c",
+        ])
+    }
+
+    @Test @MainActor func addToConnectionHistoryDeduplicatesAndPrepends() {
+        let state = AppState()
+        state.scopeConnectionHistory = [
+            "/Users/test/project-a",
+            "/Users/test/project-b",
+        ]
+        state.addToConnectionHistory("/Users/test/project-b")
+        #expect(state.scopeConnectionHistory.first == "/Users/test/project-b")
+        #expect(state.scopeConnectionHistory.count == 2)
+
+        state.addToConnectionHistory("/Users/test/project-c")
+        #expect(state.scopeConnectionHistory.first == "/Users/test/project-c")
+        #expect(state.scopeConnectionHistory.count == 3)
+    }
+
+    private func session(id: String, directory: String, updated: Int) -> Session {
+        Session(
+            id: id,
+            slug: id,
+            projectID: "p1",
+            directory: directory,
+            parentID: nil,
+            title: "Title",
+            version: "1",
+            time: .init(created: updated, updated: updated, archived: nil),
+            share: nil,
+            summary: nil
+        )
+    }
+}
