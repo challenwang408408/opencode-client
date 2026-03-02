@@ -464,6 +464,7 @@ struct SettingsTabView: View {
         sshConfig.remotePort = newPort
         state.sshTunnelManager.config.remotePort = newPort
         isSwitchingMachine = true
+        state.resetServerEnvironment()
         Task {
             state.sshTunnelManager.disconnect()
             await state.sshTunnelManager.connect()

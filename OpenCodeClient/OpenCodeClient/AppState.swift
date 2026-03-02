@@ -417,9 +417,12 @@ final class AppState {
     private let todoStore = TodoStore()
 
     var sessions: [Session] { get { sessionStore.sessions } set { sessionStore.sessions = newValue } }
+    private static let internalSessionTitles: Set<String> = ["Scope Switch"]
+
     var sortedSessions: [Session] {
         sessions
             .filter { showArchivedSessions || $0.time.archived == nil }
+            .filter { !Self.internalSessionTitles.contains($0.title) }
             .sorted { $0.time.updated > $1.time.updated }
     }
 
@@ -789,11 +792,25 @@ final class AppState {
         self.username = username ?? ""
         self.password = password ?? ""
         if urlChanged {
-            serverHomePath = nil
-            hasDetectedServerEnv = false
-            _dedicatedScopeSwitchSessionID = nil
-            serverCurrentProjectWorktree = nil
+            resetServerEnvironment()
         }
+    }
+
+    /// Reset all cached server environment state. Call when the underlying
+    /// machine changes (e.g. SSH tunnel switches to a different port/machine)
+    /// even if the server URL stays the same.
+    func resetServerEnvironment() {
+        serverHomePath = nil
+        hasDetectedServerEnv = false
+        _dedicatedScopeSwitchSessionID = nil
+        serverCurrentProjectWorktree = nil
+        serverOpencodeBinary = nil
+        serverUsesLaunchd = false
+        desktopScopeCandidates = []
+        aiTestScopeCandidates = []
+        targetTreeRoot = []
+        targetExpandedPaths = []
+        targetChildrenCache = [:]
     }
 
     func testConnection() async {
@@ -843,7 +860,8 @@ final class AppState {
 
             // Only auto-select first session if there's no persisted selection at all
             // This handles the case of fresh install or after all sessions are deleted
-            if currentSessionID == nil, let first = sessions.first {
+            if currentSessionID == nil,
+               let first = sessions.first(where: { !Self.internalSessionTitles.contains($0.title) }) {
                 currentSessionID = first.id
                 applySavedModelForCurrentSession()
             }
@@ -1174,14 +1192,15 @@ final class AppState {
 
     /// Infer serverHomePath from worktree. Re-derives on every call so that
     /// switching between machines (different /Users/xxx) is handled correctly.
+    ///
+    /// When the worktree cannot derive a home path (e.g. worktree is "/"),
+    /// we keep the existing serverHomePath (which may have been set by
+    /// detectServerEnvironment via `echo $HOME`) to avoid an infinite loop
+    /// between loadScopeSwitchCandidates ↔ detectServerEnvironment.
     private func inferServerHomePath() {
         guard let home = Self.deriveHomePath(from: serverCurrentProjectWorktree) else {
-            if serverHomePath != nil {
-                Self.scopeLog("[SCOPE] worktree '\(serverCurrentProjectWorktree ?? "nil")' can't derive home, clearing stale serverHomePath")
-                serverHomePath = nil
-                hasDetectedServerEnv = false
-                _dedicatedScopeSwitchSessionID = nil
-            }
+            // Worktree is nil, empty, or not under /Users/xxx — nothing to infer.
+            // Preserve any serverHomePath already set by detectServerEnvironment.
             return
         }
         if home != serverHomePath {
@@ -1337,6 +1356,7 @@ final class AppState {
 
     func loadScopeSwitchCandidates() async {
         guard isConnected else { return }
+        guard !isLoadingScopeCandidates else { return }
 
         inferServerHomePath()
 
@@ -1345,8 +1365,27 @@ final class AppState {
 
         guard let home = serverHomePath else {
             if !hasDetectedServerEnv { await detectServerEnvironment() }
-            guard serverHomePath != nil else { return }
-            await loadScopeSwitchCandidates()
+            guard let home = serverHomePath else { return }
+            // Fall through to use the home that detectServerEnvironment just set,
+            // instead of recursing (which risked an infinite loop).
+            let desktopPath = home + "/Desktop"
+            let aiTestPath = home + "/Desktop/AI_test"
+            do {
+                let sessionID = try await ensureScopeSwitchSessionID()
+                let desktopOutput = try await runScopeSwitchShellCommand(
+                    sessionID: sessionID,
+                    command: "ls -1p '\(desktopPath)' 2>/dev/null"
+                )
+                desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
+                let aiTestOutput = try await runScopeSwitchShellCommand(
+                    sessionID: sessionID,
+                    command: "ls -1p '\(aiTestPath)' 2>/dev/null"
+                )
+                aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
+                    .filter { $0.type == "directory" }
+            } catch {
+                Self.logger.warning("loadScopeSwitchCandidates shell failed: \(error.localizedDescription)")
+            }
             return
         }
 

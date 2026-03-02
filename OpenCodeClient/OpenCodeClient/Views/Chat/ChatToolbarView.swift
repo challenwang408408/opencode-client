@@ -15,6 +15,7 @@ struct ChatToolbarView: View {
     
     @State private var showCreateDisabledAlert = false
     @State private var showModelPicker = false
+    @State private var showScopeSheet = false
     @State private var modelSearchText = ""
     @State private var collapsedProviderIDs: Set<String> = []
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -88,9 +89,10 @@ struct ChatToolbarView: View {
         }
     }
     
-    // MARK: - Right Side Buttons (Model + Agent + Settings)
+    // MARK: - Right Side Buttons (Connect + Model + Agent + Settings)
     private var rightButtons: some View {
         HStack(spacing: LayoutConstants.Toolbar.modelButtonSpacing) {
+            scopeConnectButton
             modelMenu
             agentMenu
             ContextUsageButton(state: state)
@@ -251,6 +253,64 @@ struct ChatToolbarView: View {
         )
     }
     
+    // MARK: - Scope Connect Button
+    private var scopeConnectButton: some View {
+        Button {
+            showScopeSheet = true
+        } label: {
+            HStack(spacing: 4) {
+                if state.targetScopeSwitchStatus.isBusy {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .tint(.white)
+                } else {
+                    Image(systemName: "link")
+                        .font(.caption2.weight(.bold))
+                }
+                Text(scopeConnectLabel)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(scopeConnectBackground)
+            .foregroundColor(scopeConnectForeground)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showScopeSheet) {
+            ScopeConnectSheet(state: state)
+        }
+    }
+
+    private var scopeConnectLabel: String {
+        if state.targetScopeSwitchStatus.isBusy {
+            return L10n.t(.filesConnectInProgress)
+        }
+        if let worktree = state.serverCurrentProjectWorktree,
+           !worktree.isEmpty, worktree != "/" {
+            return (worktree as NSString).lastPathComponent
+        }
+        return L10n.t(.chatConnectButton)
+    }
+
+    private var scopeConnectBackground: some ShapeStyle {
+        if state.targetScopeSwitchStatus == .connected {
+            return AnyShapeStyle(Color.green.gradient)
+        }
+        if state.targetScopeSwitchStatus.isBusy {
+            return AnyShapeStyle(Color.orange.gradient)
+        }
+        return AnyShapeStyle(Color(.systemGray5))
+    }
+
+    private var scopeConnectForeground: Color {
+        if state.targetScopeSwitchStatus == .connected || state.targetScopeSwitchStatus.isBusy {
+            return .white
+        }
+        return .secondary
+    }
+
     // MARK: - Agent Selection Menu
     private var agentMenu: some View {
         Menu {
@@ -294,5 +354,269 @@ struct ChatToolbarView: View {
             .clipShape(Capsule())
         }
         .menuStyle(.borderlessButton)
+    }
+}
+
+// MARK: - Scope Connect Sheet
+
+struct ScopeConnectSheet: View {
+    @Bindable var state: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            List {
+                currentTargetSection
+                connectionHistorySection
+                candidateSection
+                statusSection
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle(L10n.t(.chatConnectSheetTitle))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L10n.t(.commonOk)) { dismiss() }
+                }
+            }
+            .task {
+                await state.loadScopeSwitchCandidates()
+            }
+        }
+    }
+
+    // MARK: - Current Target
+    private var currentTargetSection: some View {
+        Section(L10n.t(.filesCurrentTargetsTitle)) {
+            if let worktree = state.serverCurrentProjectWorktree,
+               !worktree.isEmpty, worktree != "/" {
+                HStack(spacing: 8) {
+                    Image(systemName: "folder.fill")
+                        .foregroundStyle(.green)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text((worktree as NSString).lastPathComponent)
+                            .font(.body.weight(.medium))
+                        Text(worktree)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+                }
+            } else {
+                Text(L10n.t(.filesNoCurrentTarget))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    // MARK: - Connection History
+    @ViewBuilder
+    private var connectionHistorySection: some View {
+        let history = state.connectionHistoryForDisplay
+        if !history.isEmpty {
+            Section(L10n.t(.filesConnectionHistory)) {
+                ForEach(history, id: \.self) { path in
+                    historyRow(path)
+                }
+            }
+        }
+    }
+
+    private func historyRow(_ path: String) -> some View {
+        let folderName = (path as NSString).lastPathComponent
+        let isSwitching = state.targetScopeSwitchStatus.isBusy && state.targetScopeSwitchTargetPath == path
+        return HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folderName)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                state.startTargetScopeSwitch(path: path)
+            } label: {
+                if isSwitching {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.7)
+                        Text(L10n.t(.filesConnectInProgress))
+                    }
+                } else {
+                    Text(L10n.t(.filesSwitch))
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(state.targetScopeSwitchStatus.isBusy)
+        }
+    }
+
+    // MARK: - Candidate Projects
+    private var candidateSection: some View {
+        Section(L10n.t(.filesCandidateTitle)) {
+            if state.isDetectingServerEnv {
+                loadingRow(L10n.t(.filesDetectingEnv))
+            }
+
+            if state.isLoadingScopeCandidates {
+                loadingRow(L10n.t(.fileLoading))
+            }
+
+            if !state.isLoadingScopeCandidates && !state.isDetectingServerEnv {
+                desktopGroup
+                aiTestGroup
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var desktopGroup: some View {
+        if !state.desktopScopeCandidates.isEmpty {
+            DisclosureGroup {
+                ForEach(state.desktopScopeCandidates) { candidate in
+                    candidateRow(candidate)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "desktopcomputer")
+                        .foregroundStyle(.blue)
+                    Text(L10n.t(.filesDesktopGroup))
+                        .font(.body.weight(.medium))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var aiTestGroup: some View {
+        if !state.aiTestScopeCandidates.isEmpty {
+            DisclosureGroup {
+                ForEach(state.aiTestScopeCandidates) { candidate in
+                    candidateRow(candidate)
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.fill.badge.gearshape")
+                        .foregroundStyle(.orange)
+                    Text(L10n.t(.filesAITestGroup))
+                        .font(.body.weight(.medium))
+                }
+            }
+        }
+
+        if state.desktopScopeCandidates.isEmpty && state.aiTestScopeCandidates.isEmpty {
+            Text(L10n.t(.filesNoCurrentTarget))
+                .foregroundStyle(.secondary)
+                .font(.footnote)
+        }
+    }
+
+    private func candidateRow(_ candidate: AppState.ScopeSwitchCandidate) -> some View {
+        let isDirectory = candidate.type == "directory"
+        let isSwitchingCurrent = state.targetScopeSwitchStatus.isBusy && state.targetScopeSwitchTargetPath == candidate.path
+        let isCurrentTarget = state.serverCurrentProjectWorktree == candidate.path
+
+        return HStack(spacing: 10) {
+            Image(systemName: isDirectory ? "folder.fill" : "doc.text")
+                .foregroundStyle(isCurrentTarget ? .green : .secondary)
+            Text(candidate.name)
+                .font(.body.weight(.medium))
+                .foregroundStyle(isCurrentTarget ? .primary : .secondary)
+                .lineLimit(1)
+            Spacer()
+            if isDirectory {
+                if isCurrentTarget {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        state.startTargetScopeSwitch(path: candidate.path)
+                    } label: {
+                        if isSwitchingCurrent {
+                            HStack(spacing: 4) {
+                                ProgressView().scaleEffect(0.7)
+                                Text(L10n.t(.filesConnectInProgress))
+                            }
+                        } else {
+                            Text(L10n.t(.filesConnect))
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(state.targetScopeSwitchStatus.isBusy)
+                }
+            }
+        }
+    }
+
+    // MARK: - Status Section
+    @ViewBuilder
+    private var statusSection: some View {
+        let hasProgress = state.targetScopeSwitchProgressText != nil
+        let hasError = {
+            guard let err = state.targetScopeSwitchErrorText else { return false }
+            return !err.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }()
+
+        if hasProgress || hasError {
+            Section {
+                if let text = state.targetScopeSwitchProgressText {
+                    HStack(spacing: 8) {
+                        if state.targetScopeSwitchStatus.isBusy {
+                            ProgressView().scaleEffect(0.8)
+                        }
+                        Text(text)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if state.targetScopeSwitchStatus.isBusy {
+                            Button {
+                                state.cancelTargetScopeSwitch()
+                            } label: {
+                                Text(L10n.t(.commonCancel))
+                                    .font(.footnote)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .tint(.red)
+                        }
+                    }
+                }
+
+                if let err = state.targetScopeSwitchErrorText,
+                   !err.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(err)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                        if state.targetScopeSwitchStatus == .failed,
+                           let path = state.targetScopeSwitchTargetPath {
+                            Button {
+                                state.startTargetScopeSwitch(path: path)
+                            } label: {
+                                Label(L10n.t(.scopeSwitchRetry), systemImage: "arrow.clockwise")
+                                    .font(.footnote)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func loadingRow(_ text: String) -> some View {
+        HStack(spacing: 8) {
+            ProgressView().scaleEffect(0.8)
+            Text(text)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
     }
 }

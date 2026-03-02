@@ -198,6 +198,10 @@ enum L10n {
         case scopeSwitchRetry
         case scopeSwitchTimeoutDetail
 
+        case chatConnectButton
+        case chatConnectSheetTitle
+        case chatConnectCurrentTarget
+
         case fileLoading
         case fileError
         case fileBinary
@@ -423,6 +427,10 @@ enum L10n {
         Key.scopeSwitchStepWaiting.rawValue: "Waiting for server recovery (%ds)...",
         Key.scopeSwitchRetry.rawValue: "Retry",
         Key.scopeSwitchTimeoutDetail.rawValue: "Server did not restart within the expected time. It may still be starting — you can retry.",
+
+        Key.chatConnectButton.rawValue: "Connect",
+        Key.chatConnectSheetTitle.rawValue: "Switch Target",
+        Key.chatConnectCurrentTarget.rawValue: "Current: %@",
 
         Key.fileLoading.rawValue: "Loading...",
         Key.fileError.rawValue: "Error",
@@ -652,6 +660,10 @@ enum L10n {
         Key.scopeSwitchStepWaiting.rawValue: "等待服务恢复 (%d秒)...",
         Key.scopeSwitchRetry.rawValue: "重试",
         Key.scopeSwitchTimeoutDetail.rawValue: "服务未在预期时间内重启，可能仍在启动中，可以尝试重试。",
+
+        Key.chatConnectButton.rawValue: "连接",
+        Key.chatConnectSheetTitle.rawValue: "切换目标",
+        Key.chatConnectCurrentTarget.rawValue: "当前: %@",
 
         Key.fileLoading.rawValue: "加载中...",
         Key.fileError.rawValue: "错误",
