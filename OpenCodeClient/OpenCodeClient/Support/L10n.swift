@@ -15,6 +15,7 @@ enum L10n {
         case commonCancel
         case commonEdit
         case commonSave
+        case commonSearch
 
         case navFiles
         case navSettings
@@ -109,6 +110,9 @@ enum L10n {
         case chatSessionStatusIdle
         case chatPullToLoadMore
         case chatLoadingMoreHistory
+        case chatTechnicalDetailsToggle
+        case chatBackgroundActivity
+        case chatBackgroundActivitySummary
 
         case permissionRequired
         case permissionAllowOnce
@@ -168,6 +172,9 @@ enum L10n {
         case sessionsGroupYesterday
         case sessionsGroupThisWeek
         case sessionsGroupEarlier
+        case sessionsSearchPlaceholder
+        case sessionsSearchEmptyTitle
+        case sessionsSearchEmptyDescription
 
         case focusAll
         case focusDirectory
@@ -180,6 +187,8 @@ enum L10n {
         case filesCandidateTitle
         case filesDesktopGroup
         case filesAITestGroup
+        case filesSearchCandidatesPlaceholder
+        case filesSearchCandidatesEmpty
         case filesConnect
         case filesConnectInProgress
         case filesDetectingEnv
@@ -201,6 +210,10 @@ enum L10n {
         case chatConnectButton
         case chatConnectSheetTitle
         case chatConnectCurrentTarget
+        case chatSessionDirectories
+        case chatScopeMismatchTitle
+        case chatScopeMismatchMessage
+        case chatScopeMismatchSwitch
 
         case fileLoading
         case fileError
@@ -250,6 +263,7 @@ enum L10n {
         Key.commonCancel.rawValue: "Cancel",
         Key.commonEdit.rawValue: "Edit",
         Key.commonSave.rawValue: "Save",
+        Key.commonSearch.rawValue: "Search",
         Key.navFiles.rawValue: "Files",
         Key.navSettings.rawValue: "Settings",
         Key.navPreview.rawValue: "Preview",
@@ -341,6 +355,9 @@ enum L10n {
         Key.chatSessionStatusIdle.rawValue: "Idle",
         Key.chatPullToLoadMore.rawValue: "Pull down to load more history",
         Key.chatLoadingMoreHistory.rawValue: "Loading more history...",
+        Key.chatTechnicalDetailsToggle.rawValue: "Toggle technical details",
+        Key.chatBackgroundActivity.rawValue: "Background Activity",
+        Key.chatBackgroundActivitySummary.rawValue: "%d technical steps hidden",
 
         Key.permissionRequired.rawValue: "Permission Required",
         Key.permissionAllowOnce.rawValue: "Allow Once",
@@ -400,6 +417,9 @@ enum L10n {
         Key.sessionsGroupYesterday.rawValue: "Yesterday",
         Key.sessionsGroupThisWeek.rawValue: "This Week",
         Key.sessionsGroupEarlier.rawValue: "Earlier",
+        Key.sessionsSearchPlaceholder.rawValue: "Search sessions",
+        Key.sessionsSearchEmptyTitle.rawValue: "No Matching Sessions",
+        Key.sessionsSearchEmptyDescription.rawValue: "Try another title or path keyword.",
         Key.focusAll.rawValue: "All Files",
         Key.focusDirectory.rawValue: "Focus",
         Key.filesCurrentTargetsTitle.rawValue: "Current Target",
@@ -410,6 +430,8 @@ enum L10n {
         Key.filesCandidateTitle.rawValue: "Available Projects",
         Key.filesDesktopGroup.rawValue: "Desktop",
         Key.filesAITestGroup.rawValue: "AI_test Projects",
+        Key.filesSearchCandidatesPlaceholder.rawValue: "Search available projects",
+        Key.filesSearchCandidatesEmpty.rawValue: "No matching projects or folders",
         Key.filesConnect.rawValue: "Connect",
         Key.filesConnectInProgress.rawValue: "Connecting",
         Key.filesDetectingEnv.rawValue: "Detecting server environment...",
@@ -431,6 +453,10 @@ enum L10n {
         Key.chatConnectButton.rawValue: "Connect",
         Key.chatConnectSheetTitle.rawValue: "Switch Target",
         Key.chatConnectCurrentTarget.rawValue: "Current: %@",
+        Key.chatSessionDirectories.rawValue: "Session Directories",
+        Key.chatScopeMismatchTitle.rawValue: "Scope Mismatch",
+        Key.chatScopeMismatchMessage.rawValue: "This session belongs to \"%@\", but the server is currently targeting \"%@\". Switch target scope before sending?",
+        Key.chatScopeMismatchSwitch.rawValue: "Switch",
 
         Key.fileLoading.rawValue: "Loading...",
         Key.fileError.rawValue: "Error",
@@ -480,6 +506,7 @@ enum L10n {
         Key.commonCancel.rawValue: "取消",
         Key.commonEdit.rawValue: "修改",
         Key.commonSave.rawValue: "保存",
+        Key.commonSearch.rawValue: "搜索",
         Key.navFiles.rawValue: "文件",
         Key.navSettings.rawValue: "设置",
         Key.navPreview.rawValue: "预览",
@@ -574,6 +601,9 @@ enum L10n {
         Key.chatSessionStatusIdle.rawValue: "空闲",
         Key.chatPullToLoadMore.rawValue: "下拉加载更多历史消息",
         Key.chatLoadingMoreHistory.rawValue: "正在加载更多历史消息...",
+        Key.chatTechnicalDetailsToggle.rawValue: "切换技术细节显示",
+        Key.chatBackgroundActivity.rawValue: "后台执行中",
+        Key.chatBackgroundActivitySummary.rawValue: "已隐藏 %d 条技术步骤",
 
         Key.permissionRequired.rawValue: "需要授权",
         Key.permissionAllowOnce.rawValue: "允许一次",
@@ -633,6 +663,9 @@ enum L10n {
         Key.sessionsGroupYesterday.rawValue: "昨天",
         Key.sessionsGroupThisWeek.rawValue: "本周",
         Key.sessionsGroupEarlier.rawValue: "更早",
+        Key.sessionsSearchPlaceholder.rawValue: "搜索 Session",
+        Key.sessionsSearchEmptyTitle.rawValue: "没有匹配的 Session",
+        Key.sessionsSearchEmptyDescription.rawValue: "试试其他标题或路径关键词。",
         Key.focusAll.rawValue: "全部文件",
         Key.focusDirectory.rawValue: "聚焦",
         Key.filesCurrentTargetsTitle.rawValue: "当前目标",
@@ -643,6 +676,8 @@ enum L10n {
         Key.filesCandidateTitle.rawValue: "可选项目",
         Key.filesDesktopGroup.rawValue: "桌面",
         Key.filesAITestGroup.rawValue: "AI_test 项目",
+        Key.filesSearchCandidatesPlaceholder.rawValue: "搜索可切换项目",
+        Key.filesSearchCandidatesEmpty.rawValue: "没有匹配的项目或文件夹",
         Key.filesConnect.rawValue: "连接",
         Key.filesConnectInProgress.rawValue: "连接中",
         Key.filesDetectingEnv.rawValue: "正在检测服务端环境...",
@@ -664,6 +699,10 @@ enum L10n {
         Key.chatConnectButton.rawValue: "连接",
         Key.chatConnectSheetTitle.rawValue: "切换目标",
         Key.chatConnectCurrentTarget.rawValue: "当前: %@",
+        Key.chatSessionDirectories.rawValue: "Session 目录",
+        Key.chatScopeMismatchTitle.rawValue: "目标范围不一致",
+        Key.chatScopeMismatchMessage.rawValue: "该 Session 属于「%@」，但服务端当前目标为「%@」。是否切换目标范围？",
+        Key.chatScopeMismatchSwitch.rawValue: "切换",
 
         Key.fileLoading.rawValue: "加载中...",
         Key.fileError.rawValue: "错误",

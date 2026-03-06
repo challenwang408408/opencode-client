@@ -10,6 +10,7 @@ struct ChatToolbarView: View {
     @Binding var showSessionList: Bool
     @Binding var showRenameAlert: Bool
     @Binding var renameText: String
+    @Binding var showTechnicalDetails: Bool
     var showSettingsInToolbar: Bool
     var onSettingsTap: (() -> Void)?
     
@@ -93,6 +94,15 @@ struct ChatToolbarView: View {
     private var rightButtons: some View {
         HStack(spacing: LayoutConstants.Toolbar.modelButtonSpacing) {
             scopeConnectButton
+            Button {
+                showTechnicalDetails.toggle()
+            } label: {
+                Image(systemName: showTechnicalDetails ? "slider.horizontal.3" : "line.3.horizontal.decrease.circle")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundColor(showTechnicalDetails ? .accentColor : .secondary)
+            }
+            .accessibilityLabel(L10n.t(.chatTechnicalDetailsToggle))
             modelMenu
             agentMenu
             ContextUsageButton(state: state)
@@ -366,6 +376,7 @@ struct ScopeConnectSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                sessionDirectorySection
                 currentTargetSection
                 connectionHistorySection
                 candidateSection
@@ -381,6 +392,60 @@ struct ScopeConnectSheet: View {
             }
             .task {
                 await state.loadScopeSwitchCandidates()
+            }
+        }
+    }
+
+    // MARK: - Session Directories
+    @ViewBuilder
+    private var sessionDirectorySection: some View {
+        let dirs = state.uniqueSessionDirectories
+        if !dirs.isEmpty {
+            Section(L10n.t(.chatSessionDirectories)) {
+                ForEach(dirs, id: \.self) { dir in
+                    sessionDirectoryRow(dir)
+                }
+            }
+        }
+    }
+
+    private func sessionDirectoryRow(_ dir: String) -> some View {
+        let folderName = (dir as NSString).lastPathComponent
+        let isCurrentTarget = state.serverCurrentProjectWorktree == dir
+        let isSwitching = state.targetScopeSwitchStatus.isBusy && state.targetScopeSwitchTargetPath == dir
+
+        return HStack(spacing: 10) {
+            Image(systemName: "folder.fill")
+                .foregroundStyle(isCurrentTarget ? .green : .blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(folderName)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(dir)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            if isCurrentTarget {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            } else {
+                Button {
+                    state.startTargetScopeSwitch(path: dir)
+                } label: {
+                    if isSwitching {
+                        HStack(spacing: 4) {
+                            ProgressView().scaleEffect(0.7)
+                            Text(L10n.t(.filesConnectInProgress))
+                        }
+                    } else {
+                        Text(L10n.t(.filesSwitch))
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(state.targetScopeSwitchStatus.isBusy)
             }
         }
     }

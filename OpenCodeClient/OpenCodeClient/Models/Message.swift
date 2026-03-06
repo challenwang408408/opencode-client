@@ -320,6 +320,19 @@ struct Part: Codable, Identifiable {
     var isTool: Bool { type == "tool" }
     var isPatch: Bool { type == "patch" }
 
+    var isPlanningTool: Bool {
+        tool == "todowrite" || tool == "todoread"
+    }
+
+    var isSkillOrMCPTool: Bool {
+        guard let tool else { return false }
+        return tool == "skill" || tool == "skill_mcp" || tool == "mcp"
+    }
+
+    var shouldShowInCompactProgress: Bool {
+        isPlanningTool || isSkillOrMCPTool
+    }
+
     /// 可跳转的文件路径列表：来自 files 数组、metadata.path、或 state.input 中的 path/patchText 解析
     var filePathsForNavigation: [String] {
         var out: [String] = []

@@ -13,27 +13,57 @@ struct SessionListView: View {
     @State private var deleteError: String?
     @State private var showCreateDisabledAlert = false
     @State private var expandedParentIDs: Set<String> = []
+    @State private var sessionSearchText = ""
+
+    private var normalizedSessionSearch: String {
+        sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var isSearchingSessions: Bool {
+        !normalizedSessionSearch.isEmpty
+    }
+
+    private var filteredSessionGroups: [AppState.SessionGroup] {
+        guard isSearchingSessions else { return state.groupedSessions }
+        return state.groupedSessions.compactMap { group in
+            let sessions = group.sessions.filter { session in
+                matchesSessionSearch(session) || !matchingChildren(for: session).isEmpty
+            }
+            guard !sessions.isEmpty else { return nil }
+            return AppState.SessionGroup(id: group.id, title: group.title, sessions: sessions)
+        }
+    }
 
     var body: some View {
         NavigationStack {
-            Group {
+            VStack(spacing: 12) {
+                InlineSearchField(
+                    prompt: L10n.t(.sessionsSearchPlaceholder),
+                    text: $sessionSearchText
+                )
+                .padding(.horizontal)
+
                 if state.sessions.isEmpty {
                     ContentUnavailableView(
                         L10n.t(.sessionsEmptyTitle),
                         systemImage: "bubble.left.and.bubble.right",
                         description: Text(L10n.t(.sessionsEmptyDescription))
                     )
+                } else if filteredSessionGroups.isEmpty {
+                    ContentUnavailableView(
+                        L10n.t(.sessionsSearchEmptyTitle),
+                        systemImage: "magnifyingglass",
+                        description: Text(L10n.t(.sessionsSearchEmptyDescription))
+                    )
                 } else {
                     List {
-                        ForEach(state.groupedSessions) { group in
+                        ForEach(filteredSessionGroups) { group in
                             Section(header: Text(group.title)) {
                                 ForEach(group.sessions) { session in
                                     sessionRow(session)
-                                    if expandedParentIDs.contains(session.id) {
-                                        ForEach(state.childSessions(for: session.id)) { child in
+                                    ForEach(visibleChildren(for: session)) { child in
                                             sessionRow(child)
                                                 .padding(.leading, 28)
-                                        }
                                     }
                                 }
                             }
@@ -115,9 +145,9 @@ struct SessionListView: View {
 
     @ViewBuilder
     private func sessionRow(_ session: Session) -> some View {
-        let children = state.childSessions(for: session.id)
+        let children = visibleChildren(for: session)
         let hasChildren = !children.isEmpty
-        let isExpanded = expandedParentIDs.contains(session.id)
+        let isExpanded = isSearchingSessions ? hasChildren : expandedParentIDs.contains(session.id)
 
         SessionRowView(
             session: session,
@@ -126,10 +156,12 @@ struct SessionListView: View {
             isDeleting: deletingSessionID == session.id,
             childCount: children.count,
             isExpanded: isExpanded,
-            isChild: session.parentID != nil && !session.parentID!.isEmpty
+            isChild: session.parentID != nil && !session.parentID!.isEmpty,
+            searchQuery: normalizedSessionSearch
         ) {
             selectSession(session)
         } onToggleExpand: {
+            guard !isSearchingSessions else { return }
             if hasChildren {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     if isExpanded {
@@ -149,6 +181,26 @@ struct SessionListView: View {
             .tint(.red)
             .disabled(deletingSessionID != nil)
         }
+    }
+
+    private func visibleChildren(for session: Session) -> [Session] {
+        let children = state.childSessions(for: session.id)
+        guard isSearchingSessions else {
+            return expandedParentIDs.contains(session.id) ? children : []
+        }
+        return matchingChildren(for: session)
+    }
+
+    private func matchingChildren(for session: Session) -> [Session] {
+        state.childSessions(for: session.id).filter(matchesSessionSearch)
+    }
+
+    private func matchesSessionSearch(_ session: Session) -> Bool {
+        let query = normalizedSessionSearch
+        guard !query.isEmpty else { return true }
+        let title = session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title
+        let text = "\(title) \(session.directory) \(session.slug)".lowercased()
+        return text.contains(query)
     }
 
     private func selectSession(_ session: Session) {
@@ -178,6 +230,7 @@ struct SessionRowView: View {
     var childCount: Int = 0
     var isExpanded: Bool = false
     var isChild: Bool = false
+    var searchQuery: String = ""
     let onSelect: () -> Void
     var onToggleExpand: (() -> Void)? = nil
     
@@ -198,7 +251,7 @@ struct SessionRowView: View {
 
                 if isChild {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
+                        highlightedText(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
                             .font(.caption)
                             .lineLimit(1)
                             .foregroundStyle(isBusy ? .blue : .primary)
@@ -210,7 +263,7 @@ struct SessionRowView: View {
                 } else {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
+                            highlightedText(session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title)
                                 .font(.headline)
                                 .foregroundStyle(isBusy ? .blue : .primary)
 
@@ -288,5 +341,39 @@ struct SessionRowView: View {
         case "busy", "retry": return .blue
         default: return .secondary
         }
+    }
+
+    private func highlightedText(_ source: String) -> Text {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return Text(source) }
+
+        let lowerSource = source.lowercased()
+        var result = Text("")
+        var currentSourceIndex = source.startIndex
+        var searchStart = lowerSource.startIndex
+
+        while let match = lowerSource.range(of: query, range: searchStart..<lowerSource.endIndex) {
+            let startOffset = lowerSource.distance(from: lowerSource.startIndex, to: match.lowerBound)
+            let endOffset = lowerSource.distance(from: lowerSource.startIndex, to: match.upperBound)
+            let start = source.index(source.startIndex, offsetBy: startOffset)
+            let end = source.index(source.startIndex, offsetBy: endOffset)
+
+            if currentSourceIndex < start {
+                result = result + Text(String(source[currentSourceIndex..<start]))
+            }
+
+            result = result + Text(String(source[start..<end]))
+                .bold()
+                .foregroundColor(.accentColor)
+
+            currentSourceIndex = end
+            searchStart = match.upperBound
+        }
+
+        if currentSourceIndex < source.endIndex {
+            result = result + Text(String(source[currentSourceIndex..<source.endIndex]))
+        }
+
+        return result
     }
 }

@@ -42,9 +42,14 @@ struct ChatTabView: View {
     @State private var isTranscribing = false
     @State private var speechError: String?
     @State private var isUserNearBottom: Bool = true
+    @State private var lastAutoScrollAt: Date = .distantPast
+    @State private var pendingAutoScrollTask: Task<Void, Never>?
+    @AppStorage("chatShowTechnicalDetails") private var showTechnicalDetails = false
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var useGridCards: Bool { sizeClass == .regular }
+
+    private var swipeNavigationEnabled: Bool { sizeClass != .regular }
 
     fileprivate struct TurnActivity: Identifiable {
         enum State {
@@ -259,6 +264,7 @@ struct ChatTabView: View {
                     showSessionList: $showSessionList,
                     showRenameAlert: $showRenameAlert,
                     renameText: $renameText,
+                    showTechnicalDetails: $showTechnicalDetails,
                     showSettingsInToolbar: showSettingsInToolbar,
                     onSettingsTap: onSettingsTap
                 )
@@ -291,6 +297,27 @@ struct ChatTabView: View {
                     Text(error)
                 }
             }
+            .alert(L10n.t(.chatScopeMismatchTitle), isPresented: Binding(
+                get: { state.scopeMismatchSessionDirectory != nil },
+                set: { if !$0 { state.scopeMismatchSessionDirectory = nil } }
+            )) {
+                Button(L10n.t(.chatScopeMismatchSwitch)) {
+                    if let dir = state.scopeMismatchSessionDirectory {
+                        state.startTargetScopeSwitch(path: dir)
+                    }
+                    state.scopeMismatchSessionDirectory = nil
+                }
+                Button(L10n.t(.commonCancel), role: .cancel) {
+                    state.scopeMismatchSessionDirectory = nil
+                }
+            } message: {
+                if let sessionDir = state.scopeMismatchSessionDirectory {
+                    let serverDir = (state.serverCurrentProjectWorktree ?? "/") as String
+                    Text(L10n.t(.chatScopeMismatchMessage,
+                                (sessionDir as NSString).lastPathComponent,
+                                (serverDir as NSString).lastPathComponent))
+                }
+            }
             .alert(L10n.t(.chatRenameSession), isPresented: $showRenameAlert) {
                 TextField(L10n.t(.chatTitleField), text: $renameText)
                 Button(L10n.t(.commonCancel), role: .cancel) { showRenameAlert = false }
@@ -313,15 +340,21 @@ struct ChatTabView: View {
             .onAppear {
                 syncDraftFromState(sessionID: state.currentSessionID)
             }
+            .onDisappear {
+                pendingAutoScrollTask?.cancel()
+                pendingAutoScrollTask = nil
+            }
             .onChange(of: state.currentSessionID) { oldID, newID in
                 state.setDraftText(inputText, for: oldID)
                 syncDraftFromState(sessionID: newID)
                 isUserNearBottom = true
+                lastAutoScrollAt = .distantPast
             }
             .onChange(of: inputText) { _, newValue in
                 guard !isSyncingDraft else { return }
                 state.setDraftText(newValue, for: state.currentSessionID)
             }
+            .simultaneousGesture(chatSwipeGesture)
         }
     }
 
@@ -411,15 +444,10 @@ struct ChatTabView: View {
         let streamKeyCount = state.streamingPartTexts.count
         let streamCharCount = state.streamingPartTexts.values.reduce(into: 0) { partial, text in
             partial += text.count
-        } / 200
+        } / 800
         let streamingReasoningID = state.streamingReasoningPart?.id ?? ""
         let sid = state.currentSessionID ?? ""
-        let status = state.currentSessionStatus?.type ?? ""
-        let activity = runningTurnActivity.map {
-            let state = ($0.state == .running) ? "running" : "completed"
-            return "\($0.id)-\($0.text)-\(state)"
-        } ?? ""
-        return "\(perm)-\(messageCount)-\(lastMessageSignature)-\(streamKeyCount)-\(streamCharCount)-\(streamingReasoningID)-\(sid)-\(status)-\(activity)"
+        return "\(perm)-\(messageCount)-\(lastMessageSignature)-\(streamKeyCount)-\(streamCharCount)-\(streamingReasoningID)-\(sid)"
     }
 
     // MARK: - Message Scroll Area
@@ -442,21 +470,13 @@ struct ChatTabView: View {
             )
             .onChange(of: scrollAnchor) { _, _ in
                 guard isUserNearBottom else { return }
-                if state.isBusy {
-                    proxy.scrollTo("bottom", anchor: .bottom)
-                } else {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
-                    }
-                }
+                scheduleAutoScroll(with: proxy)
             }
             .overlay(alignment: .bottomTrailing) {
                 if !isUserNearBottom {
                     Button {
                         isUserNearBottom = true
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo("bottom", anchor: .bottom)
-                        }
+                        scheduleAutoScroll(with: proxy, force: true)
                     } label: {
                         Image(systemName: "arrow.down.circle.fill")
                             .font(.title)
@@ -469,7 +489,6 @@ struct ChatTabView: View {
                     .transition(.scale.combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.2), value: isUserNearBottom)
         }
     }
 
@@ -505,6 +524,7 @@ struct ChatTabView: View {
                                 message: msg,
                                 sessionTodos: state.sessionTodos[msg.info.sessionID] ?? [],
                                 workspaceDirectory: state.currentSession?.directory,
+                                showTechnicalDetails: showTechnicalDetails,
                                 onOpenResolvedPath: openFileInChat,
                                 onOpenFilesTab: openFilesTab
                             )
@@ -515,6 +535,7 @@ struct ChatTabView: View {
                                     message: merged,
                                     sessionTodos: state.sessionTodos[merged.info.sessionID] ?? [],
                                     workspaceDirectory: state.currentSession?.directory,
+                                    showTechnicalDetails: showTechnicalDetails,
                                     onOpenResolvedPath: openFileInChat,
                                     onOpenFilesTab: openFilesTab
                                 )
@@ -557,7 +578,6 @@ struct ChatTabView: View {
             Color.clear
                 .frame(height: 1)
                 .id("bottom")
-                .onAppear { isUserNearBottom = true }
         }
         .padding()
     }
@@ -683,6 +703,48 @@ struct ChatTabView: View {
 
     private func openFilesTab() {
         state.selectedTab = 1
+    }
+
+    private func scheduleAutoScroll(with proxy: ScrollViewProxy, force: Bool = false) {
+        pendingAutoScrollTask?.cancel()
+
+        let now = Date()
+        let minimumDelay: TimeInterval = state.isBusy ? 0.25 : 0
+        let elapsed = now.timeIntervalSince(lastAutoScrollAt)
+        let delay = force ? 0 : max(0, minimumDelay - elapsed)
+
+        pendingAutoScrollTask = Task { @MainActor in
+            if delay > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            }
+            guard !Task.isCancelled, isUserNearBottom else { return }
+
+            if state.isBusy && !force {
+                proxy.scrollTo("bottom", anchor: .bottom)
+            } else {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
+            }
+            lastAutoScrollAt = Date()
+        }
+    }
+
+    private var chatSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard swipeNavigationEnabled else { return }
+
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard abs(horizontal) > 60, abs(horizontal) > abs(vertical) * 1.4 else { return }
+
+                if horizontal > 0 {
+                    showSessionList = true
+                } else if state.selectedTab < 2 {
+                    state.selectedTab += 1
+                }
+            }
     }
 }
 

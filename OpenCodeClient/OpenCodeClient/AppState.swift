@@ -358,6 +358,7 @@ final class AppState {
     var serverVersion: String?
     var connectionError: String?
     var sendError: String?
+    var scopeMismatchSessionDirectory: String?
 
     // Session activity (rendered in transcript; session-scoped)
     var sessionActivities: [String: SessionActivity] = [:]
@@ -368,6 +369,8 @@ final class AppState {
     // Debounce session activity text changes (avoid rapid flipping).
     private var activityTextLastChangeAt: [String: Date] = [:]
     private var activityTextPendingTask: [String: Task<Void, Never>] = [:]
+    private var deferredMessageRefreshTask: Task<Void, Never>?
+    private var deferredMessageRefreshSessionID: String?
 
     var currentSessionActivity: SessionActivity? {
         guard let sid = currentSessionID else { return nil }
@@ -770,6 +773,15 @@ final class AppState {
     var currentSession: Session? {
         guard let id = currentSessionID else { return nil }
         return sessions.first { $0.id == id }
+    }
+
+    var uniqueSessionDirectories: [String] {
+        var seen = Set<String>()
+        return sessions.compactMap { session in
+            let dir = session.directory
+            guard !dir.isEmpty, dir != "/", seen.insert(dir).inserted else { return nil }
+            return dir
+        }
     }
 
     var currentSessionStatus: SessionStatus? {
@@ -1850,8 +1862,17 @@ final class AppState {
 
     func sendMessage(_ text: String) async -> Bool {
         sendError = nil
+        scopeMismatchSessionDirectory = nil
         guard let sessionID = currentSessionID else {
             sendError = L10n.t(.chatSelectSessionFirst)
+            return false
+        }
+        if let session = currentSession,
+           let worktree = serverCurrentProjectWorktree,
+           !worktree.isEmpty, worktree != "/",
+           !session.directory.isEmpty, session.directory != "/",
+           session.directory != worktree {
+            scopeMismatchSessionDirectory = session.directory
             return false
         }
         let tempMessageID = appendOptimisticUserMessage(text)
@@ -2056,6 +2077,7 @@ final class AppState {
                     updateSessionActivity(sessionID: sessionID, previous: prev, current: decoded)
 
                     if sessionID == currentSessionID, !isBusySession(decoded) {
+                        cancelDeferredMessageRefresh(for: sessionID)
                         streamingReasoningPart = nil
                         streamingPartTexts = [:]
                         streamingDraftMessageIDs.removeAll()
@@ -2100,12 +2122,11 @@ final class AppState {
             let eventSessionID = props["sessionID"]?.value as? String
             if Self.shouldProcessMessageEvent(eventSessionID: eventSessionID, currentSessionID: currentSessionID) {
                 if isBusy {
-                    streamingReasoningPart = nil
-                    streamingPartTexts = [:]
-                    streamingDraftMessageIDs.removeAll()
-                    await loadMessages()
-                    await loadSessionDiff()
+                    if let eventSessionID {
+                        scheduleDeferredMessageRefresh(for: eventSessionID)
+                    }
                 } else {
+                    await loadMessages()
                     await loadSessionDiff()
                 }
             }
@@ -2152,8 +2173,7 @@ final class AppState {
                         refreshSessionActivityText(sessionID: sessionID)
                     } else {
                         clearStreamingState(messageID: msgID)
-                        await loadMessages()
-                        await loadSessionDiff()
+                        scheduleDeferredMessageRefresh(for: sessionID)
                     }
                 }
             }
@@ -2362,6 +2382,9 @@ final class AppState {
 
     private func clearCurrentSessionViewState() {
         sessionLoadingID = UUID()
+        deferredMessageRefreshTask?.cancel()
+        deferredMessageRefreshTask = nil
+        deferredMessageRefreshSessionID = nil
         streamingReasoningPart = nil
         streamingPartTexts = [:]
         streamingDraftMessageIDs = []
@@ -2371,6 +2394,7 @@ final class AppState {
     }
 
     private func clearSessionScopedCaches(sessionID: String) {
+        cancelDeferredMessageRefresh(for: sessionID)
         sessionStatuses[sessionID] = nil
         sessionTodos[sessionID] = nil
         sessionActivities[sessionID] = nil
@@ -2396,6 +2420,31 @@ final class AppState {
 
         selectedModelIDBySessionID[sessionID] = nil
         persistSelectedModelMap()
+    }
+
+    private func scheduleDeferredMessageRefresh(for sessionID: String, delay: TimeInterval = 0.35) {
+        guard sessionID == currentSessionID else { return }
+
+        deferredMessageRefreshTask?.cancel()
+        deferredMessageRefreshSessionID = sessionID
+        deferredMessageRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            guard self.currentSessionID == sessionID else { return }
+            guard !self.isBusySession(self.currentSessionStatus) else { return }
+
+            await self.loadMessages()
+            await self.loadSessionDiff()
+            self.cancelDeferredMessageRefresh(for: sessionID)
+        }
+    }
+
+    private func cancelDeferredMessageRefresh(for sessionID: String) {
+        guard deferredMessageRefreshSessionID == sessionID else { return }
+        deferredMessageRefreshTask?.cancel()
+        deferredMessageRefreshTask = nil
+        deferredMessageRefreshSessionID = nil
     }
 
     private func isSessionNotFoundError(_ error: Error) -> Bool {

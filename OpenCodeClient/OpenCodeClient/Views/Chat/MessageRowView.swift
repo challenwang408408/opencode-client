@@ -10,6 +10,7 @@ struct MessageRowView: View {
     let message: MessageWithParts
     let sessionTodos: [TodoItem]
     let workspaceDirectory: String?
+    let showTechnicalDetails: Bool
     let onOpenResolvedPath: (String) -> Void
     let onOpenFilesTab: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -32,6 +33,24 @@ struct MessageRowView: View {
                 let last = parts.last?.id ?? "nil"
                 return "cards-\(first)-\(last)"
             }
+        }
+    }
+
+    struct CompactToolGroup: Identifiable {
+        let parts: [Part]
+
+        var id: String {
+            let first = parts.first?.id ?? "nil"
+            let last = parts.last?.id ?? "nil"
+            return "compact-\(first)-\(last)"
+        }
+
+        var primaryStatus: String? {
+            parts.compactMap { ActivityTracker.formatStatusFromPart($0) }.first
+        }
+
+        var runningCount: Int {
+            parts.filter { $0.stateDisplay?.lowercased() == "running" }.count
         }
     }
 
@@ -62,6 +81,34 @@ struct MessageRowView: View {
 
         flushBuffer()
         return blocks
+    }
+
+    private func compactToolGroups(from parts: [Part]) -> [CompactToolGroup] {
+        guard !showTechnicalDetails else { return [] }
+        var groups: [CompactToolGroup] = []
+        var buffer: [Part] = []
+
+        func flush() {
+            guard !buffer.isEmpty else { return }
+            groups.append(CompactToolGroup(parts: buffer))
+            buffer.removeAll(keepingCapacity: true)
+        }
+
+        for part in parts where part.isTool || part.isPatch {
+            if part.shouldShowInCompactProgress {
+                flush()
+            } else {
+                buffer.append(part)
+            }
+        }
+
+        flush()
+        return groups
+    }
+
+    private func visibleParts(from parts: [Part]) -> [Part] {
+        guard !showTechnicalDetails else { return parts }
+        return parts.filter { !$0.isPatch && $0.shouldShowInCompactProgress }
     }
 
     @ViewBuilder
@@ -145,8 +192,11 @@ struct MessageRowView: View {
                         alignment: .leading,
                         spacing: 10
                     ) {
-                        ForEach(parts, id: \.id) { part in
+                        ForEach(visibleParts(from: parts), id: \.id) { part in
                             cardView(part)
+                        }
+                        ForEach(compactToolGroups(from: parts)) { group in
+                            CompactProgressSummaryCard(group: group)
                         }
                     }
                 }
@@ -176,6 +226,7 @@ struct MessageRowView: View {
                 part: part,
                 sessionTodos: sessionTodos,
                 workspaceDirectory: workspaceDirectory,
+                showTechnicalDetails: showTechnicalDetails,
                 onOpenResolvedPath: onOpenResolvedPath
             )
         } else if part.isPatch {
@@ -188,5 +239,46 @@ struct MessageRowView: View {
         } else {
             EmptyView()
         }
+    }
+}
+
+private struct CompactProgressSummaryCard: View {
+    let group: MessageRowView.CompactToolGroup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "ellipsis.rectangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(L10n.t(.chatBackgroundActivity))
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
+                if group.runningCount > 0 {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                }
+            }
+
+            Text(L10n.t(.chatBackgroundActivitySummary, group.parts.count))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            if let primaryStatus = group.primaryStatus {
+                Text(primaryStatus)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.secondary.opacity(0.08))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }

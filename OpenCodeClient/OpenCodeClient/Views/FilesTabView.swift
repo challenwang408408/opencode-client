@@ -8,6 +8,30 @@ import SwiftUI
 struct FilesTabView: View {
     @Bindable var state: AppState
     @State private var isLoadingTargetChildren: Set<String> = []
+    @State private var candidateSearchText = ""
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    private var swipeNavigationEnabled: Bool { sizeClass != .regular }
+
+    private var normalizedCandidateSearch: String {
+        candidateSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var filteredDesktopScopeCandidates: [AppState.ScopeSwitchCandidate] {
+        filterCandidates(state.desktopScopeCandidates)
+    }
+
+    private var filteredAITestScopeCandidates: [AppState.ScopeSwitchCandidate] {
+        filterCandidates(state.aiTestScopeCandidates)
+    }
+
+    private var hasAnyScopeCandidates: Bool {
+        !state.desktopScopeCandidates.isEmpty || !state.aiTestScopeCandidates.isEmpty
+    }
+
+    private var hasFilteredScopeCandidates: Bool {
+        !filteredDesktopScopeCandidates.isEmpty || !filteredAITestScopeCandidates.isEmpty
+    }
 
     var body: some View {
         NavigationStack {
@@ -32,6 +56,7 @@ struct FilesTabView: View {
                 await state.loadScopeSwitchCandidates()
                 await state.loadTargetTree()
             }
+            .simultaneousGesture(tabSwipeGesture)
         }
     }
 
@@ -137,6 +162,11 @@ struct FilesTabView: View {
 
     private var candidateSection: some View {
         Section(L10n.t(.filesCandidateTitle)) {
+            InlineSearchField(
+                prompt: L10n.t(.filesSearchCandidatesPlaceholder),
+                text: $candidateSearchText
+            )
+
             if state.isDetectingServerEnv {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.8)
@@ -158,6 +188,11 @@ struct FilesTabView: View {
             if !state.isLoadingScopeCandidates && !state.isDetectingServerEnv {
                 desktopCandidateGroup
                 aiTestCandidateGroup
+                if hasAnyScopeCandidates && !hasFilteredScopeCandidates {
+                    Text(L10n.t(.filesSearchCandidatesEmpty))
+                        .foregroundStyle(.secondary)
+                        .font(.footnote)
+                }
             }
 
             if let text = state.targetScopeSwitchProgressText {
@@ -211,9 +246,9 @@ struct FilesTabView: View {
 
     @ViewBuilder
     private var desktopCandidateGroup: some View {
-        if !state.desktopScopeCandidates.isEmpty {
+        if !filteredDesktopScopeCandidates.isEmpty {
             DisclosureGroup {
-                ForEach(state.desktopScopeCandidates) { candidate in
+                ForEach(filteredDesktopScopeCandidates) { candidate in
                     ScopeCandidateRow(state: state, candidate: candidate)
                 }
             } label: {
@@ -231,9 +266,9 @@ struct FilesTabView: View {
 
     @ViewBuilder
     private var aiTestCandidateGroup: some View {
-        if !state.aiTestScopeCandidates.isEmpty {
+        if !filteredAITestScopeCandidates.isEmpty {
             DisclosureGroup {
-                ForEach(state.aiTestScopeCandidates) { candidate in
+                ForEach(filteredAITestScopeCandidates) { candidate in
                     ScopeCandidateRow(state: state, candidate: candidate)
                 }
             } label: {
@@ -246,11 +281,37 @@ struct FilesTabView: View {
             }
         }
 
-        if state.desktopScopeCandidates.isEmpty && state.aiTestScopeCandidates.isEmpty {
+        if !hasAnyScopeCandidates {
             Text(L10n.t(.filesNoCurrentTarget))
                 .foregroundStyle(.secondary)
                 .font(.footnote)
         }
+    }
+
+    private func filterCandidates(_ candidates: [AppState.ScopeSwitchCandidate]) -> [AppState.ScopeSwitchCandidate] {
+        let query = normalizedCandidateSearch
+        guard !query.isEmpty else { return candidates }
+        return candidates.filter { candidate in
+            let haystack = "\(candidate.name) \(candidate.path) \(candidate.type)".lowercased()
+            return haystack.contains(query)
+        }
+    }
+
+    private var tabSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard swipeNavigationEnabled else { return }
+
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard abs(horizontal) > 60, abs(horizontal) > abs(vertical) * 1.4 else { return }
+
+                if horizontal > 0 {
+                    state.selectedTab = 0
+                } else if horizontal < 0 {
+                    state.selectedTab = 2
+                }
+            }
     }
 }
 

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SettingsTabView: View {
     @Bindable var state: AppState
+    @Environment(\.horizontalSizeClass) private var sizeClass
     
     @State private var showPublicKeySheet = false
     @State private var showRotateKeyAlert = false
@@ -18,6 +19,8 @@ struct SettingsTabView: View {
     @State private var isEditingRemotePort = false
     @State private var editingRemotePort: Int = 0
     @State private var isSwitchingMachine = false
+
+    private var swipeNavigationEnabled: Bool { sizeClass != .regular }
 
     var body: some View {
         NavigationStack {
@@ -421,7 +424,20 @@ struct SettingsTabView: View {
             } message: {
                 Text(publicKeyLoadError ?? L10n.t(.settingsPublicKeyCopyFailed))
             }
+            .simultaneousGesture(tabSwipeGesture)
         }
+    }
+
+    private var tabSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard swipeNavigationEnabled else { return }
+
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard horizontal > 60, horizontal > abs(vertical) * 1.4 else { return }
+                state.selectedTab = 1
+            }
     }
 
     private func machineLabel(for port: Int) -> String {

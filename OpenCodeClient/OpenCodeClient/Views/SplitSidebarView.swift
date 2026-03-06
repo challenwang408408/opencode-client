@@ -64,27 +64,61 @@ private struct SessionsSidebarList: View {
     @State private var deletingSessionID: String?
     @State private var deleteError: String?
     @State private var expandedParentIDs: Set<String> = []
+    @State private var sessionSearchText = ""
+
+    private var normalizedSessionSearch: String {
+        sessionSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private var isSearchingSessions: Bool {
+        !normalizedSessionSearch.isEmpty
+    }
+
+    private var filteredSessionGroups: [AppState.SessionGroup] {
+        guard isSearchingSessions else { return state.groupedSessions }
+        return state.groupedSessions.compactMap { group in
+            let sessions = group.sessions.filter { session in
+                matchesSessionSearch(session) || !matchingChildren(for: session).isEmpty
+            }
+            guard !sessions.isEmpty else { return nil }
+            return AppState.SessionGroup(id: group.id, title: group.title, sessions: sessions)
+        }
+    }
 
     var body: some View {
-        List {
-            ForEach(state.groupedSessions) { group in
-                Section(header: Text(group.title)) {
-                    ForEach(group.sessions) { session in
-                        sessionRow(session)
-                        if expandedParentIDs.contains(session.id) {
-                            ForEach(state.childSessions(for: session.id)) { child in
-                                sessionRow(child)
-                                    .padding(.leading, 28)
+        VStack(spacing: 8) {
+            InlineSearchField(
+                prompt: L10n.t(.sessionsSearchPlaceholder),
+                text: $sessionSearchText
+            )
+            .padding(.horizontal, 8)
+
+            if filteredSessionGroups.isEmpty {
+                ContentUnavailableView(
+                    L10n.t(.sessionsSearchEmptyTitle),
+                    systemImage: "magnifyingglass",
+                    description: Text(L10n.t(.sessionsSearchEmptyDescription))
+                )
+            } else {
+                List {
+                    ForEach(filteredSessionGroups) { group in
+                        Section(header: Text(group.title)) {
+                            ForEach(group.sessions) { session in
+                                sessionRow(session)
+                                ForEach(visibleChildren(for: session)) { child in
+                                    sessionRow(child)
+                                        .padding(.leading, 28)
+                                }
                             }
                         }
                     }
                 }
+                .listStyle(.plain)
+                .tint(.secondary)
+                .refreshable {
+                    await state.refreshSessions()
+                }
             }
-        }
-        .listStyle(.plain)
-        .tint(.secondary)
-        .refreshable {
-            await state.refreshSessions()
         }
         .alert(
             L10n.t(.sessionsDeleteConfirmTitle),
@@ -120,9 +154,9 @@ private struct SessionsSidebarList: View {
 
     @ViewBuilder
     private func sessionRow(_ session: Session) -> some View {
-        let children = state.childSessions(for: session.id)
+        let children = visibleChildren(for: session)
         let hasChildren = !children.isEmpty
-        let isExpanded = expandedParentIDs.contains(session.id)
+        let isExpanded = isSearchingSessions ? hasChildren : expandedParentIDs.contains(session.id)
 
         SessionRowView(
             session: session,
@@ -131,10 +165,12 @@ private struct SessionsSidebarList: View {
             isDeleting: deletingSessionID == session.id,
             childCount: children.count,
             isExpanded: isExpanded,
-            isChild: session.parentID != nil && !session.parentID!.isEmpty
+            isChild: session.parentID != nil && !session.parentID!.isEmpty,
+            searchQuery: normalizedSessionSearch
         ) {
             state.selectSession(session)
         } onToggleExpand: {
+            guard !isSearchingSessions else { return }
             if hasChildren {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     if isExpanded {
@@ -154,6 +190,26 @@ private struct SessionsSidebarList: View {
             .tint(.red)
             .disabled(deletingSessionID != nil)
         }
+    }
+
+    private func visibleChildren(for session: Session) -> [Session] {
+        let children = state.childSessions(for: session.id)
+        guard isSearchingSessions else {
+            return expandedParentIDs.contains(session.id) ? children : []
+        }
+        return matchingChildren(for: session)
+    }
+
+    private func matchingChildren(for session: Session) -> [Session] {
+        state.childSessions(for: session.id).filter(matchesSessionSearch)
+    }
+
+    private func matchesSessionSearch(_ session: Session) -> Bool {
+        let query = normalizedSessionSearch
+        guard !query.isEmpty else { return true }
+        let title = session.title.isEmpty ? L10n.t(.sessionsUntitled) : session.title
+        let text = "\(title) \(session.directory) \(session.slug)".lowercased()
+        return text.contains(query)
     }
 
     private func confirmDelete(_ session: Session) {
