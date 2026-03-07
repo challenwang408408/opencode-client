@@ -35,18 +35,6 @@ struct FileContentView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
-            Button {
-                loadTask?.cancel()
-                dismiss()
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "chevron.left")
-                        .font(.body.weight(.semibold))
-                    Text(L10n.t(.navFiles))
-                }
-            }
-        }
         if let content {
             ToolbarItem(placement: .primaryAction) {
                 ShareLink(item: content, subject: Text(fileName)) {
@@ -100,7 +88,6 @@ struct FileContentView: View {
         }
         .navigationTitle(fileName)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
         .toolbar { toolbarContent }
         .onAppear {
             loadContent()

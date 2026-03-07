@@ -571,7 +571,7 @@ final class AppState {
 
     var sessionDiffs: [FileDiff] { get { fileStore.sessionDiffs } set { fileStore.sessionDiffs = newValue } }
     var selectedDiffFile: String? { get { fileStore.selectedDiffFile } set { fileStore.selectedDiffFile = newValue } }
-    var selectedTab: Int = 0  // 0=Chat, 1=Files, 2=Settings
+    var selectedTab: Int = 0  // 0=Chat, 1=History, 2=Files, 3=Settings
     var fileToOpenInFilesTab: String?  // 从 Chat 中 tool 点击跳转时设置，Files tab 或 sheet 展示
 
     /// iPad 三栏布局：中间栏文件预览
@@ -1346,8 +1346,8 @@ final class AppState {
 
     // MARK: - Scope Switch Candidates
 
-    /// Parse `ls -1p` output into ScopeSwitchCandidate array.
-    /// `ls -1p` appends "/" to directory names.
+    /// Parse `ls -1tp` output into ScopeSwitchCandidate array.
+    /// `ls -1tp` sorts by modification time (newest first) and appends "/" to directory names.
     private func parseLsOutput(_ output: String, parentPath: String) -> [ScopeSwitchCandidate] {
         output
             .split(separator: "\n")
@@ -1363,7 +1363,6 @@ final class AppState {
                     type: isDir ? "directory" : "file"
                 )
             }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func loadScopeSwitchCandidates() async {
@@ -1386,12 +1385,12 @@ final class AppState {
                 let sessionID = try await ensureScopeSwitchSessionID()
                 let desktopOutput = try await runScopeSwitchShellCommand(
                     sessionID: sessionID,
-                    command: "ls -1p '\(desktopPath)' 2>/dev/null"
+                    command: "ls -1tp '\(desktopPath)' 2>/dev/null"
                 )
                 desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
                 let aiTestOutput = try await runScopeSwitchShellCommand(
                     sessionID: sessionID,
-                    command: "ls -1p '\(aiTestPath)' 2>/dev/null"
+                    command: "ls -1tp '\(aiTestPath)' 2>/dev/null"
                 )
                 aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
                     .filter { $0.type == "directory" }
@@ -1409,13 +1408,13 @@ final class AppState {
 
             let desktopOutput = try await runScopeSwitchShellCommand(
                 sessionID: sessionID,
-                command: "ls -1p '\(desktopPath)' 2>/dev/null"
+                command: "ls -1tp '\(desktopPath)' 2>/dev/null"
             )
             desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
 
             let aiTestOutput = try await runScopeSwitchShellCommand(
                 sessionID: sessionID,
-                command: "ls -1p '\(aiTestPath)' 2>/dev/null"
+                command: "ls -1tp '\(aiTestPath)' 2>/dev/null"
             )
             aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
                 .filter { $0.type == "directory" }

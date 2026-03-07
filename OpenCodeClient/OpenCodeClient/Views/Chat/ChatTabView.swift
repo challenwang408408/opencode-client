@@ -34,9 +34,9 @@ struct ChatTabView: View {
     @State private var inputText = ""
     @State private var isSending = false
     @State private var isSyncingDraft = false
-    @State private var showSessionList = false
     @State private var showRenameAlert = false
     @State private var renameText = ""
+    @State private var showCreateDisabledAlert = false
     @State private var recorder = AudioRecorder()
     @State private var isRecording = false
     @State private var isTranscribing = false
@@ -48,8 +48,6 @@ struct ChatTabView: View {
     @Environment(\.horizontalSizeClass) private var sizeClass
 
     private var useGridCards: Bool { sizeClass == .regular }
-
-    private var swipeNavigationEnabled: Bool { sizeClass != .regular }
 
     fileprivate struct TurnActivity: Identifiable {
         enum State {
@@ -261,9 +259,6 @@ struct ChatTabView: View {
             VStack(spacing: 0) {
                 ChatToolbarView(
                     state: state,
-                    showSessionList: $showSessionList,
-                    showRenameAlert: $showRenameAlert,
-                    renameText: $renameText,
                     showTechnicalDetails: $showTechnicalDetails,
                     showSettingsInToolbar: showSettingsInToolbar,
                     onSettingsTap: onSettingsTap
@@ -274,18 +269,37 @@ struct ChatTabView: View {
                 Divider()
                 chatInputBar
             }
-            .navigationTitle(state.currentSession?.title ?? L10n.t(.appChat))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(state.currentSession?.title ?? L10n.t(.appChat))
+                        .font(.headline)
+                        .lineLimit(1)
+                        .onLongPressGesture {
+                            renameText = state.currentSession?.title ?? ""
+                            showRenameAlert = true
+                        }
+                }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    if state.isBusy {
-                        ProgressView()
-                            .scaleEffect(0.8)
+                    HStack(spacing: 12) {
+                        Button {
+                            if state.canCreateSession {
+                                Task { await state.createSession() }
+                            } else {
+                                showCreateDisabledAlert = true
+                            }
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.title2.weight(.semibold))
+                                .foregroundColor(state.canCreateSession ? .accentColor : .gray)
+                        }
+
+                        if state.isBusy {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        }
                     }
                 }
-            }
-            .sheet(isPresented: $showSessionList) {
-                SessionListView(state: state)
             }
             .alert(L10n.t(.chatSendFailed), isPresented: Binding(
                 get: { state.sendError != nil },
@@ -329,6 +343,9 @@ struct ChatTabView: View {
             } message: {
                 Text(L10n.t(.chatRenameSessionPlaceholder))
             }
+            .alert(L10n.t(.chatCreateDisabledHint), isPresented: $showCreateDisabledAlert) {
+                Button(L10n.t(.commonOk)) {}
+            }
             .alert(L10n.t(.chatSpeechTitle), isPresented: Binding(
                 get: { speechError != nil },
                 set: { if !$0 { speechError = nil } }
@@ -354,7 +371,6 @@ struct ChatTabView: View {
                 guard !isSyncingDraft else { return }
                 state.setDraftText(newValue, for: state.currentSessionID)
             }
-            .simultaneousGesture(chatSwipeGesture)
         }
     }
 
@@ -495,21 +511,29 @@ struct ChatTabView: View {
     private var messageListContent: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
             if showLoadMoreHint {
-                HStack(spacing: 8) {
-                    if state.isLoadingOlderMessagesInCurrentSession {
-                        ProgressView()
-                            .controlSize(.small)
+                Button {
+                    Task { await state.loadOlderMessagesForCurrentSession() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if state.isLoadingOlderMessagesInCurrentSession {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "arrow.up.circle")
+                                .font(.caption)
+                        }
+                        Text(
+                            state.isLoadingOlderMessagesInCurrentSession
+                                ? L10n.t(.chatLoadingMoreHistory)
+                                : L10n.t(.chatPullToLoadMore)
+                        )
+                        .font(.caption)
                     }
-                    Text(
-                        state.isLoadingOlderMessagesInCurrentSession
-                            ? L10n.t(.chatLoadingMoreHistory)
-                            : L10n.t(.chatPullToLoadMore)
-                    )
-                    .font(.caption)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.top, 2)
+                .disabled(state.isLoadingOlderMessagesInCurrentSession)
             }
 
             if messageGroups.isEmpty {
@@ -697,12 +721,12 @@ struct ChatTabView: View {
             state.fileToOpenInFilesTab = nil
         } else {
             state.fileToOpenInFilesTab = resolvedPath
-            state.selectedTab = 1
+            state.selectedTab = 2
         }
     }
 
     private func openFilesTab() {
-        state.selectedTab = 1
+        state.selectedTab = 2
     }
 
     private func scheduleAutoScroll(with proxy: ScrollViewProxy, force: Bool = false) {
@@ -730,22 +754,6 @@ struct ChatTabView: View {
         }
     }
 
-    private var chatSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard swipeNavigationEnabled else { return }
-
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                guard abs(horizontal) > 60, abs(horizontal) > abs(vertical) * 1.4 else { return }
-
-                if horizontal > 0 {
-                    showSessionList = true
-                } else if state.selectedTab < 2 {
-                    state.selectedTab += 1
-                }
-            }
-    }
 }
 
 private struct TurnActivityRowView: View {

@@ -9,9 +9,6 @@ struct FilesTabView: View {
     @Bindable var state: AppState
     @State private var isLoadingTargetChildren: Set<String> = []
     @State private var candidateSearchText = ""
-    @Environment(\.horizontalSizeClass) private var sizeClass
-
-    private var swipeNavigationEnabled: Bool { sizeClass != .regular }
 
     private var normalizedCandidateSearch: String {
         candidateSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -56,7 +53,6 @@ struct FilesTabView: View {
                 await state.loadScopeSwitchCandidates()
                 await state.loadTargetTree()
             }
-            .simultaneousGesture(tabSwipeGesture)
         }
     }
 
@@ -297,22 +293,6 @@ struct FilesTabView: View {
         }
     }
 
-    private var tabSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard swipeNavigationEnabled else { return }
-
-                let horizontal = value.translation.width
-                let vertical = value.translation.height
-                guard abs(horizontal) > 60, abs(horizontal) > abs(vertical) * 1.4 else { return }
-
-                if horizontal > 0 {
-                    state.selectedTab = 0
-                } else if horizontal < 0 {
-                    state.selectedTab = 2
-                }
-            }
-    }
 }
 
 // MARK: - Target Tree Row Views

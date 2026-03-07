@@ -7,14 +7,10 @@ import SwiftUI
 
 struct ChatToolbarView: View {
     @Bindable var state: AppState
-    @Binding var showSessionList: Bool
-    @Binding var showRenameAlert: Bool
-    @Binding var renameText: String
     @Binding var showTechnicalDetails: Bool
     var showSettingsInToolbar: Bool
     var onSettingsTap: (() -> Void)?
     
-    @State private var showCreateDisabledAlert = false
     @State private var showModelPicker = false
     @State private var showScopeSheet = false
     @State private var modelSearchText = ""
@@ -32,7 +28,7 @@ struct ChatToolbarView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                sessionButtons
+                technicalDetailsToggle
                 Spacer()
                 rightButtons
             }
@@ -42,67 +38,22 @@ struct ChatToolbarView: View {
         }
     }
     
-    // MARK: - Session Operation Buttons
-    private var sessionButtons: some View {
-        HStack(spacing: LayoutConstants.Toolbar.buttonSpacing) {
-            Button {
-                showSessionList = true
-            } label: {
-                Image(systemName: "list.bullet.circle.fill")
-                    .font(.title3)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundColor(.accentColor)
-            }
-            
-            Button {
-                renameText = state.currentSession?.title ?? ""
-                showRenameAlert = true
-            } label: {
-                Image(systemName: "pencil.circle.fill")
-                    .font(.title3)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundColor(.accentColor)
-            }
-            
-            Button {
-                Task { await state.createSession() }
-            } label: {
-                Image(systemName: "plus.circle.fill")
-                    .font(.title3)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundColor(state.canCreateSession ? .accentColor : .gray)
-            }
-            .disabled(!state.canCreateSession)
-
-            if !state.canCreateSession {
-                Button {
-                    showCreateDisabledAlert = true
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.title3)
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
+    // MARK: - Technical Details Toggle (replaces old session buttons)
+    private var technicalDetailsToggle: some View {
+        Toggle(isOn: $showTechnicalDetails) {
+            Text(showTechnicalDetails ? L10n.t(.chatTechnicalDetailsOn) : L10n.t(.chatTechnicalDetailsOff))
+                .font(.caption.weight(.medium))
         }
-        .alert(L10n.t(.chatCreateDisabledHint), isPresented: $showCreateDisabledAlert) {
-            Button(L10n.t(.commonOk)) {}
-        }
+        .toggleStyle(.switch)
+        .tint(.accentColor)
+        .fixedSize()
+        .accessibilityLabel(L10n.t(.chatTechnicalDetailsToggle))
     }
     
     // MARK: - Right Side Buttons (Connect + Model + Agent + Settings)
     private var rightButtons: some View {
         HStack(spacing: LayoutConstants.Toolbar.modelButtonSpacing) {
             scopeConnectButton
-            Button {
-                showTechnicalDetails.toggle()
-            } label: {
-                Image(systemName: showTechnicalDetails ? "slider.horizontal.3" : "line.3.horizontal.decrease.circle")
-                    .font(.title3)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundColor(showTechnicalDetails ? .accentColor : .secondary)
-            }
-            .accessibilityLabel(L10n.t(.chatTechnicalDetailsToggle))
             modelMenu
             agentMenu
             ContextUsageButton(state: state)

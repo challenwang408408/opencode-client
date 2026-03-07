@@ -12,6 +12,8 @@ struct ContentView: View {
     @State private var state = AppState()
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showSettingsSheet = false
+    @State private var dragOffset: CGFloat = 0
+    @State private var isDraggingTabs: Bool? = nil
 
     /// iPad / Vision Pro：左右分栏，无 Tab Bar
     private var useSplitLayout: Bool { sizeClass == .regular }
@@ -98,7 +100,7 @@ struct ContentView: View {
             }
         }
         .onChange(of: state.selectedTab) { oldTab, newTab in
-            if oldTab == 2 && newTab != 2 {
+            if oldTab == 3 && newTab != 3 {
                 Task { await state.refresh() }
             }
         }
@@ -129,24 +131,88 @@ struct ContentView: View {
         }
     }
 
-    /// iPhone：Tab Bar 三 Tab
+    /// iPhone：自定义滑动 Tab 容器（内容跟手滑动 + 平滑吸附）
     private var tabLayout: some View {
-        TabView(selection: Binding(
-            get: { state.selectedTab },
-            set: { state.selectedTab = $0 }
-        )) {
-            ChatTabView(state: state)
-                .tabItem { Label(L10n.t(.appChat), systemImage: "bubble.left.and.bubble.right") }
-                .tag(0)
+        VStack(spacing: 0) {
+            GeometryReader { geometry in
+                let w = geometry.size.width
 
-            FilesTabView(state: state)
-                .tabItem { Label(L10n.t(.navFiles), systemImage: "folder") }
-                .tag(1)
+                HStack(spacing: 0) {
+                    ChatTabView(state: state)
+                        .frame(width: w)
+                    SessionListView(state: state, isEmbedded: true)
+                        .frame(width: w)
+                    FilesTabView(state: state)
+                        .frame(width: w)
+                    SettingsTabView(state: state)
+                        .frame(width: w)
+                }
+                .offset(x: -CGFloat(state.selectedTab) * w)
+                .offset(x: dragOffset)
+                .animation(.spring(response: 0.35, dampingFraction: 0.86), value: state.selectedTab)
+            }
+            .clipped()
+            .contentShape(Rectangle())
+            .simultaneousGesture(tabSwipeGesture)
 
-            SettingsTabView(state: state)
-                .tabItem { Label(L10n.t(.navSettings), systemImage: "gear") }
-                .tag(2)
+            SwipeableTabBar(selectedTab: Binding(
+                get: { state.selectedTab },
+                set: { newTab in
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                        state.selectedTab = newTab
+                    }
+                }
+            ))
         }
+    }
+
+    private var tabSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 15)
+            .onChanged { value in
+                if isDraggingTabs == nil {
+                    let h = abs(value.translation.width)
+                    let v = abs(value.translation.height)
+                    if h > 10 || v > 10 {
+                        isDraggingTabs = h > v * 1.2
+                    }
+                }
+
+                guard isDraggingTabs == true else { return }
+                guard value.startLocation.x > 25 else { return }
+
+                let h = value.translation.width
+                let maxTab = 3
+                if (state.selectedTab == 0 && h > 0) || (state.selectedTab == maxTab && h < 0) {
+                    dragOffset = h * 0.25
+                } else {
+                    dragOffset = h
+                }
+            }
+            .onEnded { value in
+                let wasDragging = isDraggingTabs == true
+                isDraggingTabs = nil
+
+                guard wasDragging else {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                        dragOffset = 0
+                    }
+                    return
+                }
+
+                let screenWidth = UIScreen.main.bounds.width
+                let threshold = screenWidth * 0.25
+                let h = value.translation.width
+                let velocity = value.predictedEndTranslation.width - h
+
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.86)) {
+                    if (h > threshold || velocity > 300) && state.selectedTab > 0 {
+                        state.selectedTab -= 1
+                    } else if (h < -threshold || velocity < -300) && state.selectedTab < 3 {
+                        state.selectedTab += 1
+                    }
+                    dragOffset = 0
+                }
+            }
     }
 
     /// iPad / Vision Pro：左右分栏，左 Files 右 Chat，Settings 为 toolbar 按钮
@@ -214,6 +280,53 @@ private struct PreviewColumnView: View {
                 }
             }
         }
+    }
+}
+
+private struct SwipeableTabBar: View {
+    @Binding var selectedTab: Int
+
+    private struct TabBarItem {
+        let icon: String
+        let titleKey: L10n.Key
+        let tag: Int
+    }
+
+    private let items: [TabBarItem] = [
+        TabBarItem(icon: "bubble.left.and.bubble.right", titleKey: .appChat, tag: 0),
+        TabBarItem(icon: "clock.arrow.circlepath", titleKey: .navHistory, tag: 1),
+        TabBarItem(icon: "folder", titleKey: .navFiles, tag: 2),
+        TabBarItem(icon: "gear", titleKey: .navSettings, tag: 3)
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack {
+                ForEach(items, id: \.tag) { item in
+                    Button {
+                        selectedTab = item.tag
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: item.icon)
+                                .font(.system(size: 20))
+                                .symbolVariant(selectedTab == item.tag ? .fill : .none)
+                            Text(L10n.t(item.titleKey))
+                                .font(.caption2)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .foregroundColor(selectedTab == item.tag ? .accentColor : .secondary)
+                    }
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+        }
+        .background(
+            Rectangle()
+                .fill(.bar)
+                .ignoresSafeArea(.container, edges: .bottom)
+        )
     }
 }
 

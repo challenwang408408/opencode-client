@@ -7,6 +7,7 @@ import SwiftUI
 
 struct SessionListView: View {
     @Bindable var state: AppState
+    var isEmbedded: Bool = false
     @Environment(\.dismiss) private var dismiss
     @State private var pendingDeleteSession: Session?
     @State private var deletingSessionID: String?
@@ -77,15 +78,18 @@ struct SessionListView: View {
             .navigationTitle(L10n.t(.sessionsTitle))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(L10n.t(.sessionsClose)) { dismiss() }
+                if !isEmbedded {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(L10n.t(.sessionsClose)) { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 8) {
                         Button {
                             Task {
                                 await state.createSession()
-                                dismiss()
+                                if !isEmbedded { dismiss() }
+                                if isEmbedded { state.selectedTab = 0 }
                             }
                         } label: {
                             Image(systemName: "plus.circle.fill")
@@ -172,13 +176,12 @@ struct SessionListView: View {
                 }
             }
         }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button {
+        .contextMenu {
+            Button(role: .destructive) {
                 pendingDeleteSession = session
             } label: {
                 Label(L10n.t(.sessionsDelete), systemImage: "trash")
             }
-            .tint(.red)
             .disabled(deletingSessionID != nil)
         }
     }
@@ -205,7 +208,11 @@ struct SessionListView: View {
 
     private func selectSession(_ session: Session) {
         state.selectSession(session)
-        dismiss()
+        if isEmbedded {
+            state.selectedTab = 0
+        } else {
+            dismiss()
+        }
     }
 
     private func confirmDelete(_ session: Session) {

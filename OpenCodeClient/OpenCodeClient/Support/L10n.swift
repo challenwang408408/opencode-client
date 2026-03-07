@@ -18,6 +18,7 @@ enum L10n {
         case commonSearch
 
         case navFiles
+        case navHistory
         case navSettings
         case navPreview
         case navWorkspace
@@ -111,8 +112,13 @@ enum L10n {
         case chatPullToLoadMore
         case chatLoadingMoreHistory
         case chatTechnicalDetailsToggle
+        case chatTechnicalDetailsOn
+        case chatTechnicalDetailsOff
         case chatBackgroundActivity
         case chatBackgroundActivitySummary
+        case chatCopyText
+        case chatTextCopied
+        case chatSelectText
 
         case permissionRequired
         case permissionAllowOnce
@@ -265,6 +271,7 @@ enum L10n {
         Key.commonSave.rawValue: "Save",
         Key.commonSearch.rawValue: "Search",
         Key.navFiles.rawValue: "Files",
+        Key.navHistory.rawValue: "History",
         Key.navSettings.rawValue: "Settings",
         Key.navPreview.rawValue: "Preview",
         Key.navWorkspace.rawValue: "Workspace",
@@ -353,11 +360,16 @@ enum L10n {
         Key.chatSessionStatusBusy.rawValue: "Running",
         Key.chatSessionStatusRetrying.rawValue: "Retrying",
         Key.chatSessionStatusIdle.rawValue: "Idle",
-        Key.chatPullToLoadMore.rawValue: "Pull down to load more history",
+        Key.chatPullToLoadMore.rawValue: "Tap to load more history",
         Key.chatLoadingMoreHistory.rawValue: "Loading more history...",
         Key.chatTechnicalDetailsToggle.rawValue: "Toggle technical details",
+        Key.chatTechnicalDetailsOn.rawValue: "Detailed",
+        Key.chatTechnicalDetailsOff.rawValue: "Simple",
         Key.chatBackgroundActivity.rawValue: "Background Activity",
         Key.chatBackgroundActivitySummary.rawValue: "%d technical steps hidden",
+        Key.chatCopyText.rawValue: "Copy Text",
+        Key.chatTextCopied.rawValue: "Copied",
+        Key.chatSelectText.rawValue: "Select Text",
 
         Key.permissionRequired.rawValue: "Permission Required",
         Key.permissionAllowOnce.rawValue: "Allow Once",
@@ -508,6 +520,7 @@ enum L10n {
         Key.commonSave.rawValue: "保存",
         Key.commonSearch.rawValue: "搜索",
         Key.navFiles.rawValue: "文件",
+        Key.navHistory.rawValue: "历史",
         Key.navSettings.rawValue: "设置",
         Key.navPreview.rawValue: "预览",
         Key.navWorkspace.rawValue: "Workspace",
@@ -599,11 +612,16 @@ enum L10n {
         Key.chatSessionStatusBusy.rawValue: "运行中",
         Key.chatSessionStatusRetrying.rawValue: "重试中",
         Key.chatSessionStatusIdle.rawValue: "空闲",
-        Key.chatPullToLoadMore.rawValue: "下拉加载更多历史消息",
+        Key.chatPullToLoadMore.rawValue: "点击加载更多历史消息",
         Key.chatLoadingMoreHistory.rawValue: "正在加载更多历史消息...",
         Key.chatTechnicalDetailsToggle.rawValue: "切换技术细节显示",
+        Key.chatTechnicalDetailsOn.rawValue: "详细",
+        Key.chatTechnicalDetailsOff.rawValue: "简洁",
         Key.chatBackgroundActivity.rawValue: "后台执行中",
         Key.chatBackgroundActivitySummary.rawValue: "已隐藏 %d 条技术步骤",
+        Key.chatCopyText.rawValue: "复制文本",
+        Key.chatTextCopied.rawValue: "已复制",
+        Key.chatSelectText.rawValue: "选择文本",
 
         Key.permissionRequired.rawValue: "需要授权",
         Key.permissionAllowOnce.rawValue: "允许一次",

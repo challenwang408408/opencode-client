@@ -14,6 +14,7 @@ struct MessageRowView: View {
     let onOpenResolvedPath: (String) -> Void
     let onOpenFilesTab: () -> Void
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @State private var textForSelection: String?
 
     private var cardGridColumnCount: Int { sizeClass == .regular ? 3 : 2 }
     private var cardGridColumns: [GridItem] {
@@ -116,9 +117,33 @@ struct MessageRowView: View {
         if shouldRenderMarkdown(text) {
             Markdown(text)
                 .textSelection(.enabled)
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = text
+                    } label: {
+                        Label(L10n.t(.chatCopyText), systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        textForSelection = text
+                    } label: {
+                        Label(L10n.t(.chatSelectText), systemImage: "text.cursor")
+                    }
+                }
         } else {
             Text(text)
                 .textSelection(.enabled)
+                .contextMenu {
+                    Button {
+                        UIPasteboard.general.string = text
+                    } label: {
+                        Label(L10n.t(.chatCopyText), systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        textForSelection = text
+                    } label: {
+                        Label(L10n.t(.chatSelectText), systemImage: "text.cursor")
+                    }
+                }
         }
     }
 
@@ -150,6 +175,12 @@ struct MessageRowView: View {
             } else {
                 assistantMessageView
             }
+        }
+        .sheet(item: Binding(
+            get: { textForSelection.map { TextWrapper(text: $0) } },
+            set: { textForSelection = $0?.text }
+        )) { wrapper in
+            SelectableTextSheet(text: wrapper.text)
         }
     }
 
@@ -280,5 +311,56 @@ private struct CompactProgressSummaryCard: View {
                 .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct TextWrapper: Identifiable {
+    let text: String
+    var id: String { text }
+}
+
+// MARK: - Selectable Text (UITextView wrapper)
+
+private struct SelectableTextView: UIViewRepresentable {
+    let text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.font = .preferredFont(forTextStyle: .body)
+        tv.textContainerInset = UIEdgeInsets(top: 16, left: 12, bottom: 16, right: 12)
+        tv.backgroundColor = .clear
+        tv.dataDetectorTypes = [.link]
+        return tv
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.text = text
+    }
+}
+
+struct SelectableTextSheet: View {
+    let text: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            SelectableTextView(text: text)
+                .navigationTitle(L10n.t(.chatSelectText))
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button(L10n.t(.appClose)) { dismiss() }
+                    }
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            UIPasteboard.general.string = text
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                        }
+                    }
+                }
+        }
     }
 }
