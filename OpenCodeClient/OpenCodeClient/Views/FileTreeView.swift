@@ -130,6 +130,10 @@ struct FileRow: View {
     let indent: Int
     let status: String?
 
+    private var previewType: FilePreviewType {
+        FilePreviewType.detect(path: node.name)
+    }
+
     private var statusColor: Color {
         switch status {
         case "added": return .green
@@ -139,13 +143,26 @@ struct FileRow: View {
         }
     }
 
+    private var iconName: String {
+        switch previewType {
+        case .markdown:
+            return "doc.richtext"
+        case .image:
+            return "photo"
+        case .html:
+            return "globe"
+        case .text:
+            return "doc.text"
+        }
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "chevron.right")
                 .font(.caption2)
                 .opacity(0)
                 .frame(width: 12)
-            Image(systemName: "doc.text")
+            Image(systemName: iconName)
                 .foregroundStyle(statusColor)
             Text(node.name)
                 .lineLimit(1)

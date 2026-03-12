@@ -16,6 +16,7 @@ enum L10n {
         case commonEdit
         case commonSave
         case commonSearch
+        case commonRefresh
 
         case navFiles
         case navHistory
@@ -193,11 +194,17 @@ enum L10n {
         case filesCandidateTitle
         case filesDesktopGroup
         case filesAITestGroup
+        case filesObsidianGroup
         case filesSearchCandidatesPlaceholder
         case filesSearchCandidatesEmpty
         case filesConnect
         case filesConnectInProgress
         case filesDetectingEnv
+        case filesLoadingTargetStatus
+        case filesTargetLoadedStatus
+        case filesLoadingCandidateStatus
+        case filesCandidateLoadedStatus
+        case filesUpdatedNow
         case scopeSwitchStatusSwitching
         case scopeSwitchStatusDisconnected
         case scopeSwitchStatusReconnecting
@@ -226,7 +233,12 @@ enum L10n {
         case fileBinary
         case fileNoContent
         case fileMarkdown
+        case fileSource
         case filePreview
+        case fileRendering
+        case fileUnsupportedAsset
+        case fileOpenExternal
+        case fileLoadingTimedOut
 
         case errorConnectionFailed
         case errorServerError
@@ -270,6 +282,7 @@ enum L10n {
         Key.commonEdit.rawValue: "Edit",
         Key.commonSave.rawValue: "Save",
         Key.commonSearch.rawValue: "Search",
+        Key.commonRefresh.rawValue: "Refresh",
         Key.navFiles.rawValue: "Files",
         Key.navHistory.rawValue: "History",
         Key.navSettings.rawValue: "Settings",
@@ -442,11 +455,17 @@ enum L10n {
         Key.filesCandidateTitle.rawValue: "Available Projects",
         Key.filesDesktopGroup.rawValue: "Desktop",
         Key.filesAITestGroup.rawValue: "AI_test Projects",
+        Key.filesObsidianGroup.rawValue: "Obsidian Notes",
         Key.filesSearchCandidatesPlaceholder.rawValue: "Search available projects",
         Key.filesSearchCandidatesEmpty.rawValue: "No matching projects or folders",
         Key.filesConnect.rawValue: "Connect",
         Key.filesConnectInProgress.rawValue: "Connecting",
         Key.filesDetectingEnv.rawValue: "Detecting server environment...",
+        Key.filesLoadingTargetStatus.rawValue: "Loading file tree (%d items ready)...",
+        Key.filesTargetLoadedStatus.rawValue: "%d items loaded · updated %@",
+        Key.filesLoadingCandidateStatus.rawValue: "Scanning candidate folders (%d found)...",
+        Key.filesCandidateLoadedStatus.rawValue: "%d candidate folders ready",
+        Key.filesUpdatedNow.rawValue: "just now",
         Key.scopeSwitchStatusSwitching.rawValue: "Switching target and restarting server...",
         Key.scopeSwitchStatusDisconnected.rawValue: "Server disconnected, waiting for recovery...",
         Key.scopeSwitchStatusReconnecting.rawValue: "Server reconnecting...",
@@ -475,7 +494,12 @@ enum L10n {
         Key.fileBinary.rawValue: "Binary file",
         Key.fileNoContent.rawValue: "No content",
         Key.fileMarkdown.rawValue: "Markdown",
+        Key.fileSource.rawValue: "Source",
         Key.filePreview.rawValue: "Preview",
+        Key.fileRendering.rawValue: "Rendering...",
+        Key.fileUnsupportedAsset.rawValue: "Unsupported text asset: %@",
+        Key.fileOpenExternal.rawValue: "Open externally",
+        Key.fileLoadingTimedOut.rawValue: "Loading timed out. You can retry.",
 
         Key.errorConnectionFailed.rawValue: "Connection failed: %@",
         Key.errorServerError.rawValue: "Server error: %@",
@@ -519,6 +543,7 @@ enum L10n {
         Key.commonEdit.rawValue: "修改",
         Key.commonSave.rawValue: "保存",
         Key.commonSearch.rawValue: "搜索",
+        Key.commonRefresh.rawValue: "刷新",
         Key.navFiles.rawValue: "文件",
         Key.navHistory.rawValue: "历史",
         Key.navSettings.rawValue: "设置",
@@ -694,11 +719,17 @@ enum L10n {
         Key.filesCandidateTitle.rawValue: "可选项目",
         Key.filesDesktopGroup.rawValue: "桌面",
         Key.filesAITestGroup.rawValue: "AI_test 项目",
+        Key.filesObsidianGroup.rawValue: "Obsidian 笔记",
         Key.filesSearchCandidatesPlaceholder.rawValue: "搜索可切换项目",
         Key.filesSearchCandidatesEmpty.rawValue: "没有匹配的项目或文件夹",
         Key.filesConnect.rawValue: "连接",
         Key.filesConnectInProgress.rawValue: "连接中",
         Key.filesDetectingEnv.rawValue: "正在检测服务端环境...",
+        Key.filesLoadingTargetStatus.rawValue: "正在加载文件树（已准备 %d 项）...",
+        Key.filesTargetLoadedStatus.rawValue: "已加载 %d 项 · 更新于 %@",
+        Key.filesLoadingCandidateStatus.rawValue: "正在扫描候选目录（已发现 %d 个）...",
+        Key.filesCandidateLoadedStatus.rawValue: "已准备 %d 个候选目录",
+        Key.filesUpdatedNow.rawValue: "刚刚",
         Key.scopeSwitchStatusSwitching.rawValue: "正在切换目标并重启服务...",
         Key.scopeSwitchStatusDisconnected.rawValue: "服务已断连，等待恢复...",
         Key.scopeSwitchStatusReconnecting.rawValue: "服务重连中...",
@@ -727,7 +758,12 @@ enum L10n {
         Key.fileBinary.rawValue: "二进制文件",
         Key.fileNoContent.rawValue: "无内容",
         Key.fileMarkdown.rawValue: "Markdown",
+        Key.fileSource.rawValue: "源码",
         Key.filePreview.rawValue: "预览",
+        Key.fileRendering.rawValue: "正在渲染...",
+        Key.fileUnsupportedAsset.rawValue: "不支持的文本资源：%@",
+        Key.fileOpenExternal.rawValue: "在外部打开",
+        Key.fileLoadingTimedOut.rawValue: "加载超时，你可以重试。",
 
         Key.errorConnectionFailed.rawValue: "连接失败：%@",
         Key.errorServerError.rawValue: "服务器错误：%@",

@@ -571,7 +571,7 @@ final class AppState {
 
     var sessionDiffs: [FileDiff] { get { fileStore.sessionDiffs } set { fileStore.sessionDiffs = newValue } }
     var selectedDiffFile: String? { get { fileStore.selectedDiffFile } set { fileStore.selectedDiffFile = newValue } }
-    var selectedTab: Int = 0  // 0=Chat, 1=History, 2=Files, 3=Settings
+    var selectedTab: Int = 1  // 0=History, 1=Chat, 2=Files, 3=Settings
     var fileToOpenInFilesTab: String?  // 从 Chat 中 tool 点击跳转时设置，Files tab 或 sheet 展示
 
     /// iPad 三栏布局：中间栏文件预览
@@ -597,10 +597,15 @@ final class AppState {
     var targetTreeRoot: [FileNode] = []
     var targetExpandedPaths: Set<String> = []
     var targetChildrenCache: [String: [FileNode]] = [:]
+    var isLoadingTargetTree: Bool = false
+    var targetTreeErrorText: String?
+    var targetTreeLastLoadedAt: Date?
+    private static let targetTreeLoadTimeout: UInt64 = 12_000_000_000
 
     // MARK: - Scope Switch
     var desktopScopeCandidates: [ScopeSwitchCandidate] = []
     var aiTestScopeCandidates: [ScopeSwitchCandidate] = []
+    var obsidianScopeCandidates: [ScopeSwitchCandidate] = []
     var isLoadingScopeCandidates: Bool = false
     var targetScopeSwitchStatus: TargetScopeSwitchStatus = .idle
     var targetScopeSwitchProgressText: String?
@@ -615,6 +620,8 @@ final class AppState {
     var desktopRootPath: String? { serverHomePath.map { $0 + "/Desktop" } }
     /// Dynamic AI_test folder path derived from server HOME
     var aiTestFolderPath: String? { serverHomePath.map { $0 + "/Desktop/AI_test" } }
+    /// Dynamic Obsidian vault path derived from server HOME
+    var obsidianFolderPath: String? { serverHomePath.map { $0 + "/Library/Mobile Documents/iCloud~md~obsidian/Documents/Challenwang_didi" } }
 
     /// Connection history: only manual Connect operations, persisted in UserDefaults (max 10)
     var scopeConnectionHistory: [String] {
@@ -823,6 +830,9 @@ final class AppState {
         targetTreeRoot = []
         targetExpandedPaths = []
         targetChildrenCache = [:]
+        isLoadingTargetTree = false
+        targetTreeErrorText = nil
+        targetTreeLastLoadedAt = nil
     }
 
     func testConnection() async {
@@ -1273,15 +1283,45 @@ final class AppState {
     func loadTargetTree() async {
         guard let worktree = serverCurrentProjectWorktree, !worktree.isEmpty else {
             targetTreeRoot = []
+            targetTreeErrorText = nil
+            targetTreeLastLoadedAt = nil
             return
         }
+        guard !isLoadingTargetTree else { return }
+
+        isLoadingTargetTree = true
+        targetTreeErrorText = nil
+        defer { isLoadingTargetTree = false }
+
         do {
-            targetTreeRoot = try await apiClient.fileList(path: "")
+            targetTreeRoot = try await withThrowingTaskGroup(of: [FileNode].self) { group in
+                group.addTask {
+                    try await self.apiClient.fileList(path: "")
+                }
+                group.addTask {
+                    try await Task.sleep(nanoseconds: Self.targetTreeLoadTimeout)
+                    throw URLError(.timedOut)
+                }
+
+                guard let result = try await group.next() else {
+                    throw URLError(.timedOut)
+                }
+                group.cancelAll()
+                return result
+            }
             targetExpandedPaths = []
             targetChildrenCache = [:]
+            targetTreeErrorText = nil
+            targetTreeLastLoadedAt = Date()
         } catch {
             Self.logger.warning("loadTargetTree failed for worktree=\(worktree, privacy: .public): \(error.localizedDescription, privacy: .public)")
             targetTreeRoot = []
+            if let urlError = error as? URLError, urlError.code == .timedOut {
+                targetTreeErrorText = L10n.t(.fileLoadingTimedOut)
+            } else {
+                targetTreeErrorText = error.localizedDescription
+            }
+            targetTreeLastLoadedAt = Date()
         }
     }
 
@@ -1365,6 +1405,59 @@ final class AppState {
             }
     }
 
+    nonisolated static func directoryScopeCandidate(path: String, displayName: String? = nil) -> ScopeSwitchCandidate? {
+        let normalizedPath = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedPath.isEmpty else { return nil }
+
+        let fallbackName = (normalizedPath as NSString).lastPathComponent
+        let candidateName = (displayName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+            ? displayName!.trimmingCharacters(in: .whitespacesAndNewlines)
+            : fallbackName
+        guard !candidateName.isEmpty else { return nil }
+
+        return ScopeSwitchCandidate(
+            id: normalizedPath,
+            name: candidateName,
+            path: normalizedPath,
+            type: "directory"
+        )
+    }
+
+    private func directoryExists(at path: String, sessionID: String) async throws -> Bool {
+        let output = try await runScopeSwitchShellCommand(
+            sessionID: sessionID,
+            command: "if [ -d \(shellQuote(path)) ]; then printf '__exists__'; fi"
+        )
+        return output.contains("__exists__")
+    }
+
+    private func loadScopeSwitchCandidates(home: String) async throws {
+        let desktopPath = home + "/Desktop"
+        let aiTestPath = home + "/Desktop/AI_test"
+        let obsidianPath = home + "/Library/Mobile Documents/iCloud~md~obsidian/Documents/Challenwang_didi"
+        let sessionID = try await ensureScopeSwitchSessionID()
+
+        let desktopOutput = try await runScopeSwitchShellCommand(
+            sessionID: sessionID,
+            command: "ls -1tp '\(desktopPath)' 2>/dev/null"
+        )
+        desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
+
+        let aiTestOutput = try await runScopeSwitchShellCommand(
+            sessionID: sessionID,
+            command: "ls -1tp '\(aiTestPath)' 2>/dev/null"
+        )
+        aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
+            .filter { $0.type == "directory" }
+
+        if try await directoryExists(at: obsidianPath, sessionID: sessionID),
+           let candidate = Self.directoryScopeCandidate(path: obsidianPath) {
+            obsidianScopeCandidates = [candidate]
+        } else {
+            obsidianScopeCandidates = []
+        }
+    }
+
     func loadScopeSwitchCandidates() async {
         guard isConnected else { return }
         guard !isLoadingScopeCandidates else { return }
@@ -1377,47 +1470,16 @@ final class AppState {
         guard let home = serverHomePath else {
             if !hasDetectedServerEnv { await detectServerEnvironment() }
             guard let home = serverHomePath else { return }
-            // Fall through to use the home that detectServerEnvironment just set,
-            // instead of recursing (which risked an infinite loop).
-            let desktopPath = home + "/Desktop"
-            let aiTestPath = home + "/Desktop/AI_test"
             do {
-                let sessionID = try await ensureScopeSwitchSessionID()
-                let desktopOutput = try await runScopeSwitchShellCommand(
-                    sessionID: sessionID,
-                    command: "ls -1tp '\(desktopPath)' 2>/dev/null"
-                )
-                desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
-                let aiTestOutput = try await runScopeSwitchShellCommand(
-                    sessionID: sessionID,
-                    command: "ls -1tp '\(aiTestPath)' 2>/dev/null"
-                )
-                aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
-                    .filter { $0.type == "directory" }
+                try await loadScopeSwitchCandidates(home: home)
             } catch {
                 Self.logger.warning("loadScopeSwitchCandidates shell failed: \(error.localizedDescription)")
             }
             return
         }
 
-        let desktopPath = home + "/Desktop"
-        let aiTestPath = home + "/Desktop/AI_test"
-
         do {
-            let sessionID = try await ensureScopeSwitchSessionID()
-
-            let desktopOutput = try await runScopeSwitchShellCommand(
-                sessionID: sessionID,
-                command: "ls -1tp '\(desktopPath)' 2>/dev/null"
-            )
-            desktopScopeCandidates = parseLsOutput(desktopOutput, parentPath: desktopPath)
-
-            let aiTestOutput = try await runScopeSwitchShellCommand(
-                sessionID: sessionID,
-                command: "ls -1tp '\(aiTestPath)' 2>/dev/null"
-            )
-            aiTestScopeCandidates = parseLsOutput(aiTestOutput, parentPath: aiTestPath)
-                .filter { $0.type == "directory" }
+            try await loadScopeSwitchCandidates(home: home)
         } catch {
             Self.logger.warning("loadScopeSwitchCandidates shell failed: \(error.localizedDescription)")
         }
@@ -1670,12 +1732,16 @@ final class AppState {
 
                 addToConnectionHistory(expectedPath)
                 connectSSE()
+                async let targetTreeResult: Void = loadTargetTree()
+                async let candidatesResult: Void = loadScopeSwitchCandidates()
                 await refreshAfterScopeSwitch(preservedWorktree: expectedPath)
-                await loadScopeSwitchCandidates()
-                await loadTargetTree()
+                _ = await targetTreeResult
+                _ = await candidatesResult
                 return
             }
             Self.scopeLog("[SCOPE-MON] CWD verification failed, continuing...")
+            targetScopeSwitchStatus = .reconnecting
+            targetScopeSwitchProgressText = L10n.t(.scopeSwitchStatusReconnecting)
         }
 
         targetScopeSwitchStatus = .failed
@@ -1787,6 +1853,11 @@ final class AppState {
     func loadImageData(path: String) async throws -> Data {
         let resolved = PathNormalizer.resolveWorkspaceRelativePath(path, workspaceDirectory: currentSession?.directory)
         return try await apiClient.imageData(path: resolved)
+    }
+
+    func loadBinaryFileData(path: String) async throws -> Data {
+        let resolved = PathNormalizer.resolveWorkspaceRelativePath(path, workspaceDirectory: currentSession?.directory)
+        return try await apiClient.binaryFileData(path: resolved)
     }
 
     func transcribeAudio(audioFileURL: URL, language: String? = nil) async throws -> String {
@@ -2509,14 +2580,18 @@ final class AppState {
             _ = await agentsResult
             _ = await providersResult
             _ = await projectsResult
+            async let targetTreeResult: Void = loadTargetTree()
+            async let scopeCandidatesResult: Void = loadScopeSwitchCandidates()
+            async let fileTreeResult: Void = loadFileTree()
+            async let fileStatusResult: Void = loadFileStatus()
             await loadMessages()
             await refreshPendingPermissions()
             await loadSessionDiff()
             await loadSessionTodos()
-            await loadFileTree()
-            await loadFileStatus()
-            await loadScopeSwitchCandidates()
-            await loadTargetTree()
+            _ = await fileTreeResult
+            _ = await fileStatusResult
+            _ = await scopeCandidatesResult
+            _ = await targetTreeResult
             await syncSessionStatusesFromPoll()
         }
     }
@@ -2533,12 +2608,16 @@ final class AppState {
             // Skip loadProjects() — it would overwrite serverCurrentProjectWorktree
             // with the server's git-root-based worktree (often "/"), losing our scope path.
             serverCurrentProjectWorktree = preservedWorktree
+            async let targetTreeResult: Void = loadTargetTree()
+            async let fileTreeResult: Void = loadFileTree()
+            async let fileStatusResult: Void = loadFileStatus()
             await loadMessages()
             await refreshPendingPermissions()
             await loadSessionDiff()
             await loadSessionTodos()
-            await loadFileTree()
-            await loadFileStatus()
+            _ = await fileTreeResult
+            _ = await fileStatusResult
+            _ = await targetTreeResult
             await syncSessionStatusesFromPoll()
         }
     }

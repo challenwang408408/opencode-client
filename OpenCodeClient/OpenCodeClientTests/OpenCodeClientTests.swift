@@ -260,6 +260,72 @@ struct SessionFilteringTests {
     }
 }
 
+struct ScopeSwitchCandidateTests {
+
+    @Test func directoryScopeCandidateUsesLastPathComponent() {
+        let candidate = AppState.directoryScopeCandidate(
+            path: "/Users/me/Library/Mobile Documents/iCloud~md~obsidian/Documents/Challenwang_didi"
+        )
+
+        #expect(candidate?.name == "Challenwang_didi")
+        #expect(candidate?.path == "/Users/me/Library/Mobile Documents/iCloud~md~obsidian/Documents/Challenwang_didi")
+        #expect(candidate?.type == "directory")
+    }
+
+    @Test func directoryScopeCandidateRejectsEmptyPath() {
+        let candidate = AppState.directoryScopeCandidate(path: "   ")
+        #expect(candidate == nil)
+    }
+}
+
+struct FilePreviewTypeTests {
+
+    @Test func detectsHtmlPreviewableFiles() {
+        #expect(FilePreviewType.detect(path: "index.html") == .html)
+        #expect(FilePreviewType.detect(path: "docs/page.htm") == .html)
+    }
+
+    @Test func detectsMarkdownAndImagePreviewableFiles() {
+        #expect(FilePreviewType.detect(path: "README.md") == .markdown)
+        #expect(FilePreviewType.detect(path: "cover.webp") == .image)
+        #expect(FilePreviewType.detect(path: "Sources/App.swift") == .text)
+    }
+
+    @Test func previewableKindsMatchExpectedTypes() {
+        #expect(FilePreviewType.detect(path: "demo.html").isPreviewable == true)
+        #expect(FilePreviewType.detect(path: "README.md").isPreviewable == true)
+        #expect(FilePreviewType.detect(path: "photo.png").isPreviewable == true)
+        #expect(FilePreviewType.detect(path: "main.swift").isPreviewable == false)
+    }
+}
+
+struct HTMLPreviewResourcePlannerTests {
+
+    @Test func extractsRelativeReferencesFromHTMLAndCSS() {
+        let html = #"<link rel='stylesheet' href='styles/site.css?v=1'><img src="images/hero.png#view"><style>.card{background:url('../shared/bg.jpg')}</style><script src="https://example.com/app.js"></script>"#
+        let refs = HTMLPreviewResourcePlanner.referencedRelativePaths(in: html)
+
+        #expect(refs.contains("styles/site.css"))
+        #expect(refs.contains("images/hero.png"))
+        #expect(refs.contains("../shared/bg.jpg"))
+        #expect(refs.contains("https://example.com/app.js") == false)
+    }
+
+    @Test func resolvesRelativePathsAgainstDocumentLocation() {
+        let resolved = HTMLPreviewResourcePlanner.resolvedRelativePath(
+            reference: "../assets/app.css",
+            from: "pages/demo/index.html"
+        )
+
+        #expect(resolved == "pages/assets/app.css")
+    }
+
+    @Test func rejectsRootRelativeAndEscapingReferences() {
+        #expect(HTMLPreviewResourcePlanner.resolvedRelativePath(reference: "/app.css", from: "pages/demo/index.html") == nil)
+        #expect(HTMLPreviewResourcePlanner.resolvedRelativePath(reference: "../../../secret.txt", from: "pages/demo/index.html") == nil)
+    }
+}
+
 // MARK: - Message Pagination
 
 struct MessagePaginationTests {

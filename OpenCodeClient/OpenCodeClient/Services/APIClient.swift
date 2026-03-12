@@ -373,10 +373,10 @@ actor APIClient {
         return try JSONDecoder().decode(FileContent.self, from: data)
     }
 
-    /// Optimized binary file loading: returns decoded image Data directly.
+    /// Optimized binary file loading: returns decoded bytes directly.
     /// Tries raw binary first (Accept: */*), falls back to JSON+base64 with fast JSONSerialization.
     /// All heavy processing stays on this actor — only the final decoded bytes are returned.
-    func imageData(path: String) async throws -> Data {
+    func binaryFileData(path: String) async throws -> Data {
         let queryItems = [URLQueryItem(name: "path", value: path)]
 
         let (data, response) = try await makeRequest(
@@ -398,6 +398,10 @@ actor APIClient {
             throw APIError.invalidResponse
         }
         return decoded
+    }
+
+    func imageData(path: String) async throws -> Data {
+        try await binaryFileData(path: path)
     }
 
     func findFile(query: String, limit: Int = 50) async throws -> [String] {

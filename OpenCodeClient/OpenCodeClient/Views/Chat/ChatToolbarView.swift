@@ -484,88 +484,12 @@ struct ScopeConnectSheet: View {
             }
 
             if !state.isLoadingScopeCandidates && !state.isDetectingServerEnv {
-                desktopGroup
-                aiTestGroup
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var desktopGroup: some View {
-        if !state.desktopScopeCandidates.isEmpty {
-            DisclosureGroup {
-                ForEach(state.desktopScopeCandidates) { candidate in
-                    candidateRow(candidate)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "desktopcomputer")
-                        .foregroundStyle(.blue)
-                    Text(L10n.t(.filesDesktopGroup))
-                        .font(.body.weight(.medium))
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var aiTestGroup: some View {
-        if !state.aiTestScopeCandidates.isEmpty {
-            DisclosureGroup {
-                ForEach(state.aiTestScopeCandidates) { candidate in
-                    candidateRow(candidate)
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.fill.badge.gearshape")
-                        .foregroundStyle(.orange)
-                    Text(L10n.t(.filesAITestGroup))
-                        .font(.body.weight(.medium))
-                }
-            }
-        }
-
-        if state.desktopScopeCandidates.isEmpty && state.aiTestScopeCandidates.isEmpty {
-            Text(L10n.t(.filesNoCurrentTarget))
-                .foregroundStyle(.secondary)
-                .font(.footnote)
-        }
-    }
-
-    private func candidateRow(_ candidate: AppState.ScopeSwitchCandidate) -> some View {
-        let isDirectory = candidate.type == "directory"
-        let isSwitchingCurrent = state.targetScopeSwitchStatus.isBusy && state.targetScopeSwitchTargetPath == candidate.path
-        let isCurrentTarget = state.serverCurrentProjectWorktree == candidate.path
-
-        return HStack(spacing: 10) {
-            Image(systemName: isDirectory ? "folder.fill" : "doc.text")
-                .foregroundStyle(isCurrentTarget ? .green : .secondary)
-            Text(candidate.name)
-                .font(.body.weight(.medium))
-                .foregroundStyle(isCurrentTarget ? .primary : .secondary)
-                .lineLimit(1)
-            Spacer()
-            if isDirectory {
-                if isCurrentTarget {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    Button {
-                        state.startTargetScopeSwitch(path: candidate.path)
-                    } label: {
-                        if isSwitchingCurrent {
-                            HStack(spacing: 4) {
-                                ProgressView().scaleEffect(0.7)
-                                Text(L10n.t(.filesConnectInProgress))
-                            }
-                        } else {
-                            Text(L10n.t(.filesConnect))
-                        }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(state.targetScopeSwitchStatus.isBusy)
-                }
+                ScopeCandidateSectionsView(
+                    state: state,
+                    desktopCandidates: state.desktopScopeCandidates,
+                    aiTestCandidates: state.aiTestScopeCandidates,
+                    obsidianCandidates: state.obsidianScopeCandidates
+                )
             }
         }
     }

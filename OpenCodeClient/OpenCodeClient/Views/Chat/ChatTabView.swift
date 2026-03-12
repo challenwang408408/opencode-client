@@ -610,6 +610,7 @@ struct ChatTabView: View {
     private var chatInputBar: some View {
         HStack(alignment: .bottom, spacing: 10) {
             TextField(L10n.t(.chatInputPlaceholder), text: $inputText, axis: .vertical)
+                .accessibilityIdentifier("chat-input-field")
                 .textFieldStyle(.plain)
                 .lineLimit(3...8)
                 .submitLabel(.send)

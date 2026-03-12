@@ -89,7 +89,7 @@ struct SessionListView: View {
                             Task {
                                 await state.createSession()
                                 if !isEmbedded { dismiss() }
-                                if isEmbedded { state.selectedTab = 0 }
+                                if isEmbedded { state.selectedTab = 1 }
                             }
                         } label: {
                             Image(systemName: "plus.circle.fill")
@@ -209,7 +209,7 @@ struct SessionListView: View {
     private func selectSession(_ session: Session) {
         state.selectSession(session)
         if isEmbedded {
-            state.selectedTab = 0
+            state.selectedTab = 1
         } else {
             dismiss()
         }

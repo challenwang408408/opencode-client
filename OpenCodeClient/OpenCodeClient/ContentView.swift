@@ -36,7 +36,7 @@ struct ContentView: View {
             set: { newValue, _ in
                 state.fileToOpenInFilesTab = newValue?.path
                 if newValue == nil, !useSplitLayout {
-                    state.selectedTab = 0
+                    state.selectedTab = 1
                 }
             }
         )
@@ -111,7 +111,7 @@ struct ContentView: View {
                         ToolbarItem(placement: .cancellationAction) {
                             Button(L10n.t(.appClose)) {
                                 state.fileToOpenInFilesTab = nil
-                                if !useSplitLayout { state.selectedTab = 0 }
+                                if !useSplitLayout { state.selectedTab = 1 }
                             }
                         }
                     }
@@ -138,9 +138,9 @@ struct ContentView: View {
                 let w = geometry.size.width
 
                 HStack(spacing: 0) {
-                    ChatTabView(state: state)
-                        .frame(width: w)
                     SessionListView(state: state, isEmbedded: true)
+                        .frame(width: w)
+                    ChatTabView(state: state)
                         .frame(width: w)
                     FilesTabView(state: state)
                         .frame(width: w)
@@ -293,8 +293,8 @@ private struct SwipeableTabBar: View {
     }
 
     private let items: [TabBarItem] = [
-        TabBarItem(icon: "bubble.left.and.bubble.right", titleKey: .appChat, tag: 0),
-        TabBarItem(icon: "clock.arrow.circlepath", titleKey: .navHistory, tag: 1),
+        TabBarItem(icon: "clock.arrow.circlepath", titleKey: .navHistory, tag: 0),
+        TabBarItem(icon: "bubble.left.and.bubble.right", titleKey: .appChat, tag: 1),
         TabBarItem(icon: "folder", titleKey: .navFiles, tag: 2),
         TabBarItem(icon: "gear", titleKey: .navSettings, tag: 3)
     ]

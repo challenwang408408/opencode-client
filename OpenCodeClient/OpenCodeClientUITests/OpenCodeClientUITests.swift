@@ -33,8 +33,7 @@ final class OpenCodeClientUITests: XCTestCase {
     func testChatTabShowsInputField() throws {
         let app = XCUIApplication()
         app.launch()
-        // Chat 为默认 tab，输入框 placeholder 会作为 accessibility label
-        let askField = app.textFields["Ask anything..."]
+        let askField = app.descendants(matching: .any)["chat-input-field"]
         XCTAssertTrue(askField.waitForExistence(timeout: 8), "Chat 输入框应可见")
     }
 
